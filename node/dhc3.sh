@@ -5,7 +5,7 @@ sudo su
 
 apt-get update
 
-apt-get install  python-software-properties libtool autoconf automake uuid-dev mercurial build-essential wget git -y
+apt-get install  python-software-properties python-setuptools libtool autoconf automake uuid-dev mercurial build-essential wget git monit -y
 
 # Add MongoDB to apt
 apt-key adv --keyserver keyserver.ubuntu.com --recv 7F0CEB10
@@ -52,6 +52,25 @@ ldconfig
 
 cd ..
 
+cd ..
+
 rm -rf zeromq-3.2.5
+
+mongo --host 192.168.42.100 << 'EOF'
+config = { _id: "rs0", members:[
+          { _id : 0, host : "192.168.42.100:27017"},
+          { _id : 1, host : "192.168.42.110:27017"},
+          { _id : 2, host : "192.168.42.120:27017"} ]
+         };
+rs.initiate(config);
+
+rs.status();
+
+EOF
+
+
+
+
+/etc/init.d/mongodb restart
 
 echo "done!"

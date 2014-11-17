@@ -5,7 +5,7 @@ sudo su
 
 apt-get update
 
-apt-get install  python-software-properties libtool autoconf automake uuid-dev mercurial build-essential wget git -y
+apt-get install  python-software-properties python-setuptools libtool autoconf automake uuid-dev mercurial build-essential wget git monit -y
 
 # Add MongoDB to apt
 apt-key adv --keyserver keyserver.ubuntu.com --recv 7F0CEB10

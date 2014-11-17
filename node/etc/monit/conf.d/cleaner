@@ -1,0 +1,10 @@
+#!monit
+set logfile /var/log/monit.log
+
+check process nodestat with pidfile "/var/run/cleaner.pid"
+    start program = "/sbin/start cleaner"
+    stop program  = "/sbin/stop cleaner"
+    if failed port 7054 protocol HTTP
+        request /health
+        with timeout 10 seconds
+        then restart

@@ -1,0 +1,10 @@
+#!monit
+set logfile /var/log/monit.log
+
+check process nodestat with pidfile "/var/run/server.pid"
+    start program = "/sbin/start server"
+    stop program  = "/sbin/stop server"
+    if failed port HTTPPORTOFPROC protocol HTTP
+        request /health
+        with timeout 10 seconds
+        then restart
