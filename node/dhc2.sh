@@ -55,4 +55,35 @@ cd ..
 
 rm -rf zeromq-3.2.5
 
+#create log directory
+mkdir -p /var/log/fortihealth
+chmod 777 /var/log/fortihealth
+
+#create fortinet config dir
+mkdir -p /etc/fortihealth
+chmod 777 /etc/fortihealth
+
+#create fortihealth binary dir
+mkdir -p /var/fortihealth
+chmod 777 /var/fortihealth
+
+#install log rotate
+cp /vagrant/etc/logrotate.d/fortinet  /etc/logrotate.d/
+
+#INSTALL CLEANER
+#cleaner config
+cp /vagrant/etc/fortihealth/cleaner.cfg /etc/fortihealth/
+sed -i 's/THISNODEID/DHC2/g' /etc/fortihealth/cleaner.cfg
+
+#cleaner binary
+cp /vagrant/bin/cleaner /var/fortihealth/cleaner
+chmod 777 /var/fortihealth/cleaner
+
+#cleaner monit and init files
+cp /vagrant/etc/init/cleaner.conf /etc/init/
+cp /vagrant/etc/monit/conf.d/cleaner /etc/monit/conf.d/
+
+/sbin/stop cleaner
+/sbin/start cleaner
+
 echo "done!"

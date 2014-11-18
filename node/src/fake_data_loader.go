@@ -60,7 +60,7 @@ func main() {
 
 	//populate
 
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 10000000192.168.2.105; i++ {
 
 		err = c.Insert(&Hc{
 			//

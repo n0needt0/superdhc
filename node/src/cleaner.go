@@ -15,9 +15,9 @@ import (
 	"gopkg.in/mgo.v2/bson"
 	"io"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
-	//"math/rand"
 	"os/signal"
 	"reflect"
 	"runtime"
@@ -39,12 +39,11 @@ var err error
 
 //the followign are flags passed from commandline
 var logdebug *bool = flag.Bool("debug", false, "enable debug logging")
-var Configfile *string = flag.String("config", "cleaner.cfg", "Config file location")
-var help *bool = flag.Bool("help", false, "Show options")
+var Configfile *string = flag.String("config", "/etc/fortihealth/cleaner.cfg", "Config file location")
+var help *bool = flag.Bool("help", false, "Show these options")
 var busysec *int64 = flag.Int64("busysec", 0, "Lock all for sec default 60sec")
-var busyrand *bool = flag.Bool("busyrand", false, "Lock all for random 30 - 180 sec")
-var delay *bool = flag.Bool("delay", false, "Extra sleep for 1 sec")
-var freeall *bool = flag.Bool("freeall", false, "ignore ttl configuration set busyts to 0")
+var delay *bool = flag.Bool("delay", false, "Extra 1 sec delay between requests")
+var freeall *bool = flag.Bool("freeall", false, "Ignore ttl configuration and unlock all")
 var cfg ini.File
 var Gdb, Gcollection, Gnodeid string
 var GReportHome bool = true //always report home
@@ -74,6 +73,16 @@ var HA = struct {
 	time.Duration(2500) * time.Millisecond,
 	10,
 	sync.RWMutex{},
+}
+
+func GetRandomHaServer(servers []string) (string, int) {
+	rand.Seed(time.Now().UnixNano())
+	i := rand.Intn(len(servers))
+	return strings.TrimSpace(servers[i]), i
+}
+
+func GetHaServer(servers []string, i int) string {
+	return strings.TrimSpace(servers[i])
 }
 
 //health check structure
@@ -141,6 +150,9 @@ var GetReply = func(JsonMsg []byte) (string, error) {
 	return msg.SERIAL, nil
 }
 
+/**
+* Creates serial number for request node.int.int:uuid
+ */
 func MakeSerial(nodeid string, salt int, seed int) string {
 	b := make([]byte, 16)
 	Random.Read(b)
@@ -159,8 +171,7 @@ func init() {
 
 	f, err := os.Open("/dev/urandom")
 	if err != nil {
-		log.Fatal(err)
-		os.Exit(1)
+		log.Fatalf("FATAL: opening /dev/urandom %s ", err)
 	}
 	Random = f
 }
@@ -173,21 +184,18 @@ func main() {
 	cfg, err := ini.LoadFile(*Configfile)
 
 	if err != nil {
-		log.Fatal("parse config "+*Configfile+" file error: ", err)
-		os.Exit(1)
+		log.Fatalf("FATAL: parse config "+*Configfile+" file error: %s", err)
 	}
 
 	logfile, ok := cfg.Get("system", "logfile")
 	if !ok {
-		log.Fatal("'logfile' missing from 'system' section")
-		os.Exit(1)
+		log.Fatal("FATAL: 'logfile' missing from 'system' section")
 	}
 
 	//open log file
 	logFile, err := os.OpenFile(logfile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
-		log.Fatal(fmt.Sprintf("Log file error: %s", logfile), err)
-		os.Exit(1)
+		log.Fatalf("FATAL: %s, %s ", logfile, err)
 	}
 
 	defer func() {
@@ -215,83 +223,70 @@ func main() {
 	signal.Notify(killch, syscall.SIGQUIT)
 	go func() {
 		<-killch
-		log.Printf("Interrupt %s", time.Now().String())
-		os.Exit(1)
+		log.Fatalf("INFO: Interrupt %s", time.Now().String())
 	}()
 
 	//get goodies from config file
 	//NODE ID
 	Gnodeid, ok = cfg.Get("system", "nodeid")
 	if !ok {
-		log.Fatal("'nodeid' missing from 'system' section")
-		os.Exit(1)
+		log.Fatal("FATAL: 'nodeid' missing from 'system' section")
 	}
 
 	//http server
 	httphost, ok := cfg.Get("http", "host")
 	if !ok {
-		log.Fatal("'host' missing from 'http' section")
-		os.Exit(1)
+		log.Fatal("FATAL: 'host' missing from 'http' section")
 	}
 
 	httpport, ok := cfg.Get("http", "port")
 	if !ok {
-		log.Fatal("'port' missing from 'http' section")
-		os.Exit(1)
+		log.Fatal("FATAL: 'port' missing from 'http' section")
 	}
 
 	strworkers, ok := cfg.Get("system", "workers")
 	if !ok {
-		log.Fatal("'workers' missing from 'system' section")
-		os.Exit(1)
+		log.Fatal("FATAL: 'workers' missing from 'system' section")
 	}
 
 	numworkers, err := strconv.Atoi(strworkers)
 	if err != nil {
-		log.Fatal("'workers' parameter malformed in 'system' section")
-		os.Exit(1)
+		log.Fatal("FATAL: 'workers' parameter malformed in 'system' section")
 	}
 
 	targetstr, ok := cfg.Get("zmq", "targets")
 	if !ok {
-		log.Fatal("'targets' missing from 'zmq' section")
-		os.Exit(1)
+		log.Fatal("FATAL: 'targets' missing from 'zmq' section")
 	}
 
 	timeoutstr, ok := cfg.Get("zmq", "timeout")
 	if !ok {
-		log.Fatal("'timeout' missing from 'zmq' section")
-		os.Exit(1)
+		log.Fatal("FATAL: 'timeout' missing from 'zmq' section")
 	}
 
 	mongos, ok := cfg.Get("mongo", "mongos")
 	if !ok {
-		log.Fatal("'mongos' missing from 'mongo' section")
-		os.Exit(1)
+		log.Fatal("FATAL: 'mongos' missing from 'mongo' section")
 	}
 
 	Gdb, ok := cfg.Get("mongo", "db")
 	if !ok {
-		log.Fatal("'db' missing from 'mongo' section")
-		os.Exit(1)
+		log.Fatal("FATAL: 'db' missing from 'mongo' section")
 	}
 
 	Gcollection, ok := cfg.Get("mongo", "collection")
 	if !ok {
-		log.Fatal("'collection' missing from 'mongo' section")
-		os.Exit(1)
+		log.Fatal("FATAL: 'collection' missing from 'mongo' section")
 	}
 
 	ttl, ok := cfg.Get("mongo", "ttl")
 	if !ok {
-		log.Fatal("'ttl' missing from 'mongo' section")
-		os.Exit(1)
+		log.Fatal("FATAL: 'ttl' missing from 'mongo' section")
 	}
 
 	ittl, err := strconv.Atoi(ttl)
 	if err != nil {
-		log.Fatal("'ttl' parameter malformed in 'mongo' section")
-		os.Exit(1)
+		log.Fatal("FATAL: 'ttl' parameter malformed in 'mongo' section")
 	}
 
 	Gttl = int64(ittl)
@@ -307,20 +302,17 @@ func main() {
 
 	HA.Timeout, err = time.ParseDuration(timeoutstr)
 	if err != nil {
-		log.Fatal("'timeout' parameter malformed in 'system' section")
-		os.Exit(1)
+		log.Fatal("FATAL: 'timeout' parameter malformed in 'system' section")
 	}
 
 	retries, ok := cfg.Get("zmq", "retries")
 	if !ok {
-		log.Fatal("'retries' missing from 'zmq' section")
-		os.Exit(1)
+		log.Fatal("FATAL: 'retries' missing from 'zmq' section")
 	}
 
 	HA.Retries, err = strconv.Atoi(retries)
 	if err != nil {
-		log.Fatal("'retries' parameter malformed in 'system' section")
-		os.Exit(1)
+		log.Fatal("FATAL: 'retries' parameter malformed in 'system' section")
 	}
 
 	go func() {
@@ -330,7 +322,7 @@ func main() {
 				GStats.Lock()
 				GStats.Rate = GStats.RateCounter.Rate()
 				GStats.Unlock()
-				log.Printf("rate %d sec, workers %d,  drops %d", GStats.Rate, GStats.Workers, GStats.ConsecutiveDead)
+				log.Printf("INFO: rate %d sec, workers %d,  drops %d", GStats.Rate, GStats.Workers, GStats.ConsecutiveDead)
 			}
 		}
 	}()
@@ -339,8 +331,7 @@ func main() {
 	MGOsession, err := mgo.Dial(mongos)
 
 	if err != nil {
-		log.Fatal("Mongo connection error : %s", err)
-		os.Exit(1)
+		log.Fatalf("FATAL: Mongo connection error : %s", err)
 	}
 	defer MGOsession.Close()
 
@@ -385,11 +376,11 @@ func main() {
 		change := bson.M{"$set": bson.M{"busyts": ts}}
 		_, err = c.UpdateAll(query, change)
 		if err != nil {
-			log.Printf("busyall %s", err)
+			log.Fatalf("INFO: busyall %s", err)
 		}
 
-		log.Printf("busyts updated to %d!", ts)
-		os.Exit(0)
+		log.Fatalf("INFO: busyts updated to %d!", ts)
+
 	}
 
 	if *freeall {
@@ -399,11 +390,11 @@ func main() {
 		change := bson.M{"$set": bson.M{"busyts": 0}}
 		_, err = c.UpdateAll(query, change)
 		if err != nil {
-			log.Printf("freeyall %s", err)
+			log.Fatalf("INFO: freeall  %s", err)
 		}
 
-		log.Printf("freeall updated !")
-		os.Exit(0)
+		log.Fatal("INFO: all freed !")
+
 	}
 
 	//we need to start 2 servers, http for status and zmq
@@ -417,11 +408,11 @@ func main() {
 
 		http.Handle("/", r)
 
-		log.Printf("HTTP Listening %s : %s", httphost, httpport)
+		log.Printf("INFO: HTTP Listening %s : %s", httphost, httpport)
 
 		err = http.ListenAndServe(httphost+":"+httpport, nil)
 		if err != nil {
-			log.Fatal("ListenAndServe: ", err)
+			log.Fatalf("FATAL: ListenAndServe: ", err)
 		}
 
 		wg.Done()
@@ -450,7 +441,6 @@ func main() {
 
 func client(me int, mongoSession *mgo.Session, db string, collection string) {
 
-	CurrentServerNum := 0 //at least one should be configured
 	context, _ := zmq.NewContext()
 	defer context.Close()
 
@@ -462,14 +452,17 @@ func client(me int, mongoSession *mgo.Session, db string, collection string) {
 
 	client, err := context.NewSocket(zmq.REQ)
 	if err != nil {
-		log.Fatal("can not start worker#%d, %s", me, err)
+		log.Fatalf("FATAL: can not start worker#%d, %s", me, err)
 	}
+
+	homeserver, homeserverindex := GetRandomHaServer(HA.Servers)
+	log.Printf("INFO: Home Server %s, %d", homeserver, homeserverindex)
 
 	if GReportHome {
 		//otherwise no reason to connect home even
-		err = client.Connect(HA.Servers[CurrentServerNum])
+		err = client.Connect(homeserver)
 		if err != nil {
-			log.Fatal("can not connect worker#%d, %s", me, err)
+			log.Fatalf("FATAL: can not connect worker#%d, %s", me, err)
 		}
 	}
 
@@ -489,16 +482,18 @@ func client(me int, mongoSession *mgo.Session, db string, collection string) {
 	for sequence, retriesLeft := 1, NumofRetries; retriesLeft > 0; sequence++ {
 
 		if *delay {
+			//this is if we set extra delay for debugging
 			time.Sleep(time.Duration(1) * time.Second)
 		}
 
 		if HA.Retries == 0 {
-			//never timesout
+			//never timeout
 			retriesLeft = 100
 		}
 
-		if sequence > 100000 {
-			sequence = 1 //rewind to prevent overflow, highwater mark is set at 1000 by default
+		if sequence > 1000 {
+			//rewind to prevent overflow, highwater mark is set at 1000 by default
+			sequence = 1
 		}
 
 		//PRE REQUEST WORK//
@@ -536,10 +531,11 @@ func client(me int, mongoSession *mgo.Session, db string, collection string) {
 
 		data, err := GetRequest(serial, healthcheck)
 		if err != nil {
-			log.Printf("Error on GetRequest %s", err)
+			log.Printf("WARNING: GetRequest %s", err)
 			continue
 		}
 
+		debug(fmt.Sprintf("Connected to: %s", homeserver))
 		debug(fmt.Sprintf("REQ (%s)", data))
 
 		client.Send(data, 0)
@@ -550,21 +546,18 @@ func client(me int, mongoSession *mgo.Session, db string, collection string) {
 				zmq.PollItem{Socket: client, Events: zmq.POLLIN},
 			}
 			if _, err := zmq.Poll(items, HA.Timeout); err != nil {
-				log.Printf("ERROR REC Timeout:%s ", serial)
+				log.Printf("WARNING: REC Timeout:%s ", serial)
 				continue
 			}
 
-			//  .split process server reply
-			//  Here we process a server reply and exit our loop if the
-			//  reply is valid. If we didn't a reply we close the client
-			//  socket and resend the request. We try a number of times
-			//  before finally abandoning:
+			//  Here we process a server reply. If we didn't a reply we close the client
+			//  socket and resend the request.
 
 			if item := items[0]; item.REvents&zmq.POLLIN != 0 {
 				//  We got a reply from the server, must match sequence
 				reply, err := item.Socket.Recv(0)
 				if err != nil {
-					log.Printf("ERROR REC:%s ", serial)
+					log.Printf("WARNING: Receive: %s ", serial)
 					continue
 				}
 
@@ -572,7 +565,7 @@ func client(me int, mongoSession *mgo.Session, db string, collection string) {
 				//unpack reply  here
 				replySerial, err := GetReply(reply)
 				if err != nil {
-					log.Printf("ERROR REC UNPACK:%s : %s", serial, err)
+					log.Printf("WARNING: GetReply:%s : %s", serial, err)
 					continue
 				}
 
@@ -585,19 +578,16 @@ func client(me int, mongoSession *mgo.Session, db string, collection string) {
 					GStats.Unlock()
 					expectReply = false
 				} else {
-					log.Printf("ERROR: SEQ: req: %s rep:%s", serial, replySerial)
+					log.Printf("WARNING: SEQ Mismatch: req: %s rep:%s", serial, replySerial)
 					continue
 				}
 			} else if retriesLeft--; retriesLeft == 0 {
-				log.Printf("ERROR Server offline, abandoning %s", HA.Servers[CurrentServerNum])
-
 				client.SetLinger(0)
 				client.Close()
-				log.Println("ERROR All Servers are down closing worker")
 				GStats.Lock()
 				GStats.Workers--
 				GStats.Unlock()
-				break
+				log.Fatal("FATAL:  All Servers are down...bye..")
 
 			} else {
 
@@ -606,37 +596,41 @@ func client(me int, mongoSession *mgo.Session, db string, collection string) {
 					retriesLeft = 10
 				}
 
-				if sequence > 100000 {
+				if sequence > 1000 {
 					sequence = 1 //rewind to prevent overflow, highwater mark is set at 1000 by default
 				}
 
-				if CurrentServerNum+1 >= len(HA.Servers) {
-					CurrentServerNum = 0
+				if homeserverindex+1 >= len(HA.Servers) {
+					homeserverindex = 0
 				} else {
 					//try another one
-					CurrentServerNum++
+					homeserverindex++
 				}
 
 				GStats.Lock()
 				GStats.ConsecutiveDead++
 				GStats.Unlock()
 
-				log.Printf("WARNING: failing over to %s", HA.Servers[CurrentServerNum])
+				homeserver = GetHaServer(HA.Servers, homeserverindex)
+
+				log.Printf("WARNING: failing over to %s", homeserver)
 				//  Old socket is confused; close it and open a new one
 				client.SetLinger(0)
 				client.Close()
 
 				client, err = context.NewSocket(zmq.REQ)
 				if err != nil {
-					log.Printf("ERROR: can not start worker", err)
+					log.Fatalf("FATAL: can not start worker %s", err)
 				}
 
-				err = client.Connect(HA.Servers[CurrentServerNum])
+				err = client.Connect(homeserver)
 				if err != nil {
-					log.Fatal("ERROR: can not connect worker", err)
+					log.Fatalf("FATAL: can not connect worker %s", err)
 				}
 
-				log.Printf("INFO: Resending (%s)\n", data)
+				log.Println("INFO: Resending...")
+				debug(fmt.Sprintf("%s", data))
+
 				//  Send request again, on new socket
 				client.Send(data, 0)
 
@@ -684,9 +678,9 @@ func healthHandle(w http.ResponseWriter, r *http.Request) {
 func debug(format string, args ...interface{}) {
 	if *logdebug {
 		if len(args) > 0 {
-			log.Printf("DEBUG "+format, args)
+			log.Printf("DEBUG: "+format, args)
 		} else {
-			log.Printf("DEBUG " + format)
+			log.Printf("DEBUG: " + format)
 		}
 	}
 	return
