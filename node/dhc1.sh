@@ -3,9 +3,11 @@
 # Get root up in here
 sudo su
 
+export DEBIAN_FRONTEND=noninteractive
+
 apt-get update
 
-apt-get install  python-software-properties python-setuptools libtool autoconf automake uuid-dev mercurial build-essential wget git monit -y
+apt-get install  python-software-properties python-setuptools libtool autoconf automake uuid-dev mercurial build-essential wget curl git monit -y
 
 # Add MongoDB to apt
 apt-key adv --keyserver keyserver.ubuntu.com --recv 7F0CEB10
@@ -13,13 +15,17 @@ echo 'deb http://downloads-distro.mongodb.org/repo/ubuntu-upstart dist 10gen' | 
 
 # Update and begin installing some utility tools
 apt-get -y update
-
 # Install latest stable version of MongoDB
-apt-get install -y mongodb-10gen
+apt-get install -y mongodb-org=2.6.1 mongodb-org-server=2.6.1 mongodb-org-shell=2.6.1 mongodb-org-mongos=2.6.1 mongodb-org-tools=2.6.1
 
-sed -i 's/# replSet = setname/replSet = rs0/g' /etc/mongodb.conf
+#standar dmongo conf
+cp /vagrant/etc/mongod.conf /etc/
 
-/etc/init.d/mongodb restart
+#monit script
+cp /vagrant/etc/monit/conf.d/mongo /etc/monit/conf.d/
+
+
+/etc/init.d/mongod restart
 
 echo "installing golang"
 
@@ -84,6 +90,49 @@ cp /vagrant/etc/monit/conf.d/cleaner /etc/monit/conf.d/
 
 /sbin/stop cleaner
 /sbin/start cleaner
+
+#INSTALL FEEDER
+#feeder config
+cp /vagrant/etc/fortihealth/feeder.cfg /etc/fortihealth/
+sed -i 's/THISNODEID/DHC1/g' /etc/fortihealth/feeder.cfg
+
+#feeder binary
+cp /vagrant/bin/feeder /var/fortihealth/feeder
+chmod 777 /var/fortihealth/feeder
+
+#feeder monit and init files
+cp /vagrant/etc/init/feeder.conf /etc/init/
+cp /vagrant/etc/monit/conf.d/feeder /etc/monit/conf.d/
+
+/sbin/stop feeder
+/sbin/start feeder
+
+#INSTALL NODE
+#node config
+cp /vagrant/etc/fortihealth/node.cfg /etc/fortihealth/
+sed -i 's/THISNODEID/DHC1/g' /etc/fortihealth/node.cfg
+
+#node binary
+cp /vagrant/bin/node /var/fortihealth/node
+chmod 777 /var/fortihealth/node
+
+#node monit and init files
+cp /vagrant/etc/init/node.conf /etc/init/
+cp /vagrant/etc/monit/conf.d/node /etc/monit/conf.d/
+
+/sbin/stop node
+/sbin/start node
+
+#using this repo to install ganglia 3.4 as it allows for host name overwrites
+add-apt-repository ppa:rufustfirefly/ganglia
+# Update and begin installing some utility tools
+apt-get -y update
+apt-get install ganglia-monitor -y
+
+cp /vagrant/etc/ganglia/gmond.conf /etc/ganglia/
+sed -i 's/THISNODEID/DHC1/g' /etc/ganglia/gmond.conf
+
+/etc/init.d/ganglia-monitor restart
 
 
 echo "done!"

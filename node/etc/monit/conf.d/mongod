@@ -1,0 +1,10 @@
+#!monit
+set logfile /var/log/monit.log
+
+check host mongodb with address localhost
+    start program = "/sbin/start mongod"
+    stop program = "/sbin/stop mongod"
+    if failed port 28017 protocol HTTP
+        request /
+        with timeout 10 seconds
+        then start

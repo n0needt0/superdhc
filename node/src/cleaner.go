@@ -475,7 +475,7 @@ func client(me int, mongoSession *mgo.Session, db string, collection string) {
 		NumofRetries = HA.Retries
 	}
 
-	sleepTime := 10 //this is minimum to sleep
+	sleepTime := 100 //this is minimum to sleep
 
 	serial := "" //serial number for each request
 

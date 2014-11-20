@@ -3,9 +3,10 @@
 # Get root up in here
 sudo su
 
+apt-get update
+
 export DEBIAN_FRONTEND=noninteractive
 
-apt-get update
 
 apt-get install  python-software-properties python-setuptools libtool autoconf automake uuid-dev mercurial build-essential wget curl git monit -y
 
@@ -58,7 +59,26 @@ ldconfig
 
 cd ..
 
+cd ..
+
 rm -rf zeromq-3.2.5
+
+mongo --host 192.168.82.100 << 'EOF'
+config = { _id: "rs0", members:[
+          { _id : 0, host : "192.168.82.100:27017"},
+          { _id : 1, host : "192.168.82.110:27017"},
+          { _id : 2, host : "192.168.82.120:27017"} ]
+         };
+rs.initiate(config);
+
+rs.status();
+
+EOF
+
+
+
+
+/etc/init.d/mongod restart
 
 #create log directory
 mkdir -p /var/log/fortihealth
@@ -75,53 +95,6 @@ chmod 777 /var/fortihealth
 #install log rotate
 cp /vagrant/etc/logrotate.d/fortinet  /etc/logrotate.d/
 
-#INSTALL CLEANER
-#cleaner config
-cp /vagrant/etc/fortihealth/cleaner.cfg /etc/fortihealth/
-sed -i 's/THISNODEID/DHC2/g' /etc/fortihealth/cleaner.cfg
-
-#cleaner binary
-cp /vagrant/bin/cleaner /var/fortihealth/cleaner
-chmod 777 /var/fortihealth/cleaner
-
-#cleaner monit and init files
-cp /vagrant/etc/init/cleaner.conf /etc/init/
-cp /vagrant/etc/monit/conf.d/cleaner /etc/monit/conf.d/
-
-/sbin/stop cleaner
-/sbin/start cleaner
-
-#INSTALL FEEDER
-#feeder config
-cp /vagrant/etc/fortihealth/feeder.cfg /etc/fortihealth/
-sed -i 's/THISNODEID/DHC2/g' /etc/fortihealth/feeder.cfg
-
-#feeder binary
-cp /vagrant/bin/feeder /var/fortihealth/feeder
-chmod 777 /var/fortihealth/feeder
-
-#feeder monit and init files
-cp /vagrant/etc/init/feeder.conf /etc/init/
-cp /vagrant/etc/monit/conf.d/feeder /etc/monit/conf.d/
-
-/sbin/stop feeder
-/sbin/start feeder
-
-#INSTALL NODE
-#node config
-cp /vagrant/etc/fortihealth/node.cfg /etc/fortihealth/
-sed -i 's/THISNODEID/DHC2/g' /etc/fortihealth/node.cfg
-
-#node binary
-cp /vagrant/bin/node /var/fortihealth/node
-chmod 777 /var/fortihealth/node
-
-#node monit and init files
-cp /vagrant/etc/init/node.conf /etc/init/
-cp /vagrant/etc/monit/conf.d/node /etc/monit/conf.d/
-
-/sbin/stop node
-/sbin/start node
 
 #using this repo to install ganglia 3.4 as it allows for host name overwrites
 add-apt-repository ppa:rufustfirefly/ganglia
@@ -130,8 +103,7 @@ apt-get -y update
 apt-get install ganglia-monitor -y
 
 cp /vagrant/etc/ganglia/gmond.conf /etc/ganglia/
-sed -i 's/THISNODEID/DHC2/g' /etc/ganglia/gmond.conf
+sed -i 's/THISNODEID/HOME3/g' /etc/ganglia/gmond.conf
 
 /etc/init.d/ganglia-monitor restart
-
 echo "done!"
