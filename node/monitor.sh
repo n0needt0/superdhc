@@ -21,7 +21,7 @@ mkdir -p /usr/share/ganglia-webfrontend/lib/dwoo/compiled
 chown www-data /usr/share/ganglia-webfrontend/lib/dwoo/cache
 chown www-data /usr/share/ganglia-webfrontend/lib/dwoo/compiled
 
-apt-get install rrdtool gmetad ganglia-webfrontend -y
+apt-get install rrdtool gmetad ganglia-webfrontend ganglia-monitor -y
 
 #using this repo to install ganglia-monitor 3.4 as it allows for server name overwrites
 add-apt-repository ppa:rufustfirefly/ganglia
@@ -30,9 +30,14 @@ apt-get update
 
 apt-get install ganglia-monitor -y
 
-cp /vagrant/etc/ganglia/gmond.conf /etc/ganglia/
-sed -i 's/THISNODEID/MONITOR/g' /etc/ganglia/gmond.conf
+cp /vagrant/etc/ganglia/gmetad.conf /etc/ganglia/
+cp /vagrant/etc/ganglia/gmond_server.conf /etc/ganglia/gmond.conf
+sed -i 's/THISNODEID/monitor/g' /etc/ganglia/gmond.conf
+
+echo "Alias /ganglia /usr/share/ganglia-webfrontend" >> /etc/apache2/apache2.conf
 
 /etc/init.d/ganglia-monitor restart
+/etc/init.d/gmetad restart
+/etc/init.d/apache2 restart
 
 echo "done!"

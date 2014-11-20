@@ -78,7 +78,7 @@ cp /vagrant/etc/logrotate.d/fortinet  /etc/logrotate.d/
 #INSTALL CLEANER
 #cleaner config
 cp /vagrant/etc/fortihealth/cleaner.cfg /etc/fortihealth/
-sed -i 's/THISNODEID/DHC2/g' /etc/fortihealth/cleaner.cfg
+sed -i 's/THISNODEID/dhc2/g' /etc/fortihealth/cleaner.cfg
 
 #cleaner binary
 cp /vagrant/bin/cleaner /var/fortihealth/cleaner
@@ -94,7 +94,7 @@ cp /vagrant/etc/monit/conf.d/cleaner /etc/monit/conf.d/
 #INSTALL FEEDER
 #feeder config
 cp /vagrant/etc/fortihealth/feeder.cfg /etc/fortihealth/
-sed -i 's/THISNODEID/DHC2/g' /etc/fortihealth/feeder.cfg
+sed -i 's/THISNODEID/dhc2/g' /etc/fortihealth/feeder.cfg
 
 #feeder binary
 cp /vagrant/bin/feeder /var/fortihealth/feeder
@@ -110,7 +110,7 @@ cp /vagrant/etc/monit/conf.d/feeder /etc/monit/conf.d/
 #INSTALL NODE
 #node config
 cp /vagrant/etc/fortihealth/node.cfg /etc/fortihealth/
-sed -i 's/THISNODEID/DHC2/g' /etc/fortihealth/node.cfg
+sed -i 's/THISNODEID/dhc2/g' /etc/fortihealth/node.cfg
 
 #node binary
 cp /vagrant/bin/node /var/fortihealth/node
@@ -129,8 +129,16 @@ add-apt-repository ppa:rufustfirefly/ganglia
 apt-get -y update
 apt-get install ganglia-monitor -y
 
-cp /vagrant/etc/ganglia/gmond.conf /etc/ganglia/
-sed -i 's/THISNODEID/DHC2/g' /etc/ganglia/gmond.conf
+cp /vagrant/etc/ganglia/gmond_node.conf /etc/ganglia/gmond.conf
+sed -i 's/THISNODEID/dhc2/g' /etc/ganglia/gmond.conf
+
+#install MongoDb Ganglia Support
+ mkdir /usr/lib/ganglia/python_modules
+
+ cp /vagrant/usr/lib/ganglia/python_modules/mongodb.py  /usr/lib/ganglia/python_modules/
+
+ mkdir /etc/ganglia/conf.d
+ cp /vagrant/etc/ganglia/conf.d/* /etc/ganglia/conf.d/
 
 /etc/init.d/ganglia-monitor restart
 

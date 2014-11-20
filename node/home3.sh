@@ -102,8 +102,17 @@ add-apt-repository ppa:rufustfirefly/ganglia
 apt-get -y update
 apt-get install ganglia-monitor -y
 
-cp /vagrant/etc/ganglia/gmond.conf /etc/ganglia/
-sed -i 's/THISNODEID/HOME3/g' /etc/ganglia/gmond.conf
+cp /vagrant/etc/ganglia/gmond_node.conf /etc/ganglia/gmond.conf
+sed -i 's/THISNODEID/home3/g' /etc/ganglia/gmond.conf
+
+#install MongoDb Ganglia Support
+ mkdir /usr/lib/ganglia/python_modules
+
+ cp /vagrant/usr/lib/ganglia/python_modules/mongodb.py  /usr/lib/ganglia/python_modules/
+
+ mkdir /etc/ganglia/conf.d
+ cp /vagrant/etc/ganglia/conf.d/* /etc/ganglia/conf.d/
 
 /etc/init.d/ganglia-monitor restart
+
 echo "done!"
