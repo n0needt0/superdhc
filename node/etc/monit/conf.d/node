@@ -1,7 +1,7 @@
 #!monit
 set logfile /var/log/monit.log
 
-check process nodestat with pidfile "/var/run/node.pid"
+check process node with pidfile "/var/run/node.pid"
     start program = "/sbin/start node"
     stop program  = "/sbin/stop node"
     if failed port 8094 protocol HTTP

@@ -21,7 +21,7 @@ apt-get -y update
 sudo apt-get install -y mongodb-org=2.6.1 mongodb-org-server=2.6.1 mongodb-org-shell=2.6.1 mongodb-org-mongos=2.6.1 mongodb-org-tools=2.6.1
 
 #standar dmongo conf
-cp /vagrant/etc/mongod.conf /etc/
+cp /vagrant/etc/mongod_home.conf /etc/mongod.conf
 
 #monit script
 cp /vagrant/etc/monit/conf.d/mongo /etc/monit/conf.d/
@@ -69,13 +69,12 @@ config = { _id: "rs0", members:[
           { _id : 1, host : "192.168.82.110:27017"},
           { _id : 2, host : "192.168.82.120:27017"} ]
          };
+
 rs.initiate(config);
 
 rs.status();
 
 EOF
-
-
 
 
 /etc/init.d/mongod restart
@@ -95,6 +94,39 @@ chmod 777 /var/fortihealth
 #install log rotate
 cp /vagrant/etc/logrotate.d/fortinet  /etc/logrotate.d/
 
+#INSTALL HOME-NODE
+#home-node config
+cp /vagrant/etc/fortihealth/home-node.cfg /etc/fortihealth/
+sed -i 's/THISNODEID/home3/g' /etc/fortihealth/home-node.cfg
+sed -i 's/MYIPADDRESS/192.168.82.120/g' /etc/fortihealth/home-node.cfg
+
+#home-node binary
+cp /vagrant/bin/home-node /var/fortihealth/home-node
+chmod 777 /var/fortihealth/home-node
+
+#home-node monit and init files
+cp /vagrant/etc/init/home-node.conf /etc/init/
+cp /vagrant/etc/monit/conf.d/home-node /etc/monit/conf.d/
+
+/sbin/stop home-node
+/sbin/start home-node
+
+#INSTALL HOME-CLEANER
+#node config
+cp /vagrant/etc/fortihealth/home-cleaner.cfg /etc/fortihealth/
+sed -i 's/THISNODEID/home3/g' /etc/fortihealth/home-cleaner.cfg
+sed -i 's/MYIPADDRESS/192.168.82.120/g' /etc/fortihealth/home-cleaner.cfg
+
+#home-cleaner binary
+cp /vagrant/bin/home-cleaner /var/fortihealth/home-cleaner
+chmod 777 /var/fortihealth/home-cleaner
+
+#node monit and init files
+cp /vagrant/etc/init/home-cleaner.conf /etc/init/
+cp /vagrant/etc/monit/conf.d/home-cleaner /etc/monit/conf.d/
+
+/sbin/stop home-cleaner
+/sbin/start home-cleaner
 
 #using this repo to install ganglia 3.4 as it allows for host name overwrites
 add-apt-repository ppa:rufustfirefly/ganglia

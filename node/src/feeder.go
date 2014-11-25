@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -46,6 +47,7 @@ var cfg ini.File
 var Gdb, Gcollection, Gnodeid string
 var GReportHome bool = true //always report home
 var Gttl int64
+var Grebalance int
 
 var GStats = struct {
 	RateCounter     *ratecounter.RateCounter
@@ -85,21 +87,21 @@ func GetHaServer(servers []string, i int) string {
 
 //health check structure
 type Hc struct {
-	Id            bson.ObjectId `json:"id" bson:"_id,omitempty"`
-	HealthcheckId string
-	BusyTs        int64 `json:"id,string,omitempty"`
-	RunEverySec   int   `json:"id,string,omitempty"`
-	LastRunTs     int64 `json:"id,string,omitempty"`
-	NextRunTs     int64 `json:"id,string,omitempty"`
-	OwnerId       string
-	HcClass       string
-	State         int
-	History       map[string]interface{}
-	TestConf      map[string]interface{}
-	AlertConf     map[string]interface{}
+	//Id          bson.ObjectId `json:"id,string" bson:"_id,omitempty"`
+	BusyTs      int32 `json:"bts,string" bson:"bts"`
+	IntervalSec int32 `json:"ints" bson:"ints"`
+	Cron        string
+	LastRunTs   int32 `json:"lr,string" bson:"lr"`
+	NextRunTs   int32 `json:"nr,string" bson:"nr"`
+	Hcid        string
+	HcType      string `json:"hctype" bson:"hct"`
+	Ver         int32  `json:"v,string" bson:"v"`
+	Skip        []string
+	Meta        map[string]interface{}
+	UpdatedTs   int32 `json:"upd,string" bson:"upd"`
 }
 
-//*****Processor helper functionsz
+//*****Processor helper function
 
 var GetRequest = func(serial string, load Hc) ([]byte, error) {
 
@@ -136,8 +138,10 @@ var GetReply = func(JsonMsg []byte) (string, error) {
 		LOAD:   Hc{},
 	}
 
-	err := json.Unmarshal(JsonMsg, &msg)
-	if err != nil {
+	d := json.NewDecoder(bytes.NewReader(JsonMsg))
+	d.UseNumber()
+
+	if err := d.Decode(&msg); err != nil {
 		return "", err
 	}
 
@@ -152,11 +156,7 @@ var GetReply = func(JsonMsg []byte) (string, error) {
 * Creates serial number for request node.int.int:uuid
  */
 func MakeSerial(nodeid string, salt int, seed int) string {
-	b := make([]byte, 16)
-	Random.Read(b)
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%s:%d:%d:%x-%x-%x-%x-%x", Gnodeid, salt, seed, b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+	return fmt.Sprintf("%s:%d:%d:%d", Gnodeid, salt, seed, time.Now().UnixNano())
 }
 
 //parse command line
@@ -289,6 +289,16 @@ func main() {
 
 	Gttl = int64(ittl)
 
+	strrebalance, ok := cfg.Get("zmq", "rebalance")
+	if !ok {
+		log.Fatal("FATAL: 'rebalance' missing from 'zmq' section")
+	}
+
+	Grebalance, err = strconv.Atoi(strrebalance)
+	if err != nil {
+		log.Fatal("FATAL: 'strrebalance' parameter malformed in 'zmq' section")
+	}
+
 	reps, ok := cfg.Get("system", "reporthome")
 	if ok {
 		if repb, err := strconv.ParseBool(reps); err == nil {
@@ -353,7 +363,7 @@ func main() {
 	}
 
 	// search index
-	err = c.EnsureIndexKey("busyts", "nextrunts")
+	err = c.EnsureIndexKey("bts", "nr")
 	if err != nil {
 		log.Printf("%s", err)
 		os.Exit(1)
@@ -441,6 +451,8 @@ func client(me int, mongoSession *mgo.Session, db string, collection string) {
 
 	serial := "" //serial number for each request
 
+	TargetCnt := len(HA.Servers)
+
 	for sequence, retriesLeft := 1, NumofRetries; retriesLeft > 0; sequence++ {
 
 		if *delay {
@@ -453,16 +465,36 @@ func client(me int, mongoSession *mgo.Session, db string, collection string) {
 			retriesLeft = 100
 		}
 
-		if sequence > 1000 {
+		if sequence > Grebalance {
 			//rewind to prevent overflow, highwater mark is set at 1000 by default
 			sequence = 1
+
+			if TargetCnt > 1 && homeserver != HA.Servers[0] {
+				homeserverindex = 0
+				homeserver = GetHaServer(HA.Servers, homeserverindex)
+				log.Printf("INFO: Rebalancing Home Server %s, %d", homeserver, homeserverindex)
+
+				client.SetLinger(0)
+				client.Close()
+
+				client, err = context.NewSocket(zmq.REQ)
+				if err != nil {
+					log.Fatalf("FATAL: can not start worker %s", err)
+				}
+
+				err = client.Connect(homeserver)
+				if err != nil {
+					log.Fatalf("FATAL: can not connect worker %s", err)
+				}
+
+			}
 		}
 
 		//PRE REQUEST WORK//
-		query := bson.M{"busyts": 0, "nextrunts": bson.M{"$lt": time.Now().Unix()}}
+		query := bson.M{"bts": 0, "nr": bson.M{"$lt": int(time.Now().Unix())}}
 
 		change := mgo.Change{
-			Update:    bson.M{"$set": bson.M{"busyts": time.Now().Unix()}},
+			Update:    bson.M{"$set": bson.M{"bts": int(time.Now().Unix())}},
 			ReturnNew: true,
 		}
 
@@ -470,7 +502,7 @@ func client(me int, mongoSession *mgo.Session, db string, collection string) {
 
 		debug(fmt.Sprintf("query %v", query))
 
-		info, err := c.Find(query).Sort("busyts").Apply(change, &healthcheck)
+		info, err := c.Find(query).Sort("bts").Apply(change, &healthcheck)
 		if err != nil {
 			debug(fmt.Sprintf("Result running query %v, %s, %v", info, err, query))
 			//more likely no results are found increase sleep time
@@ -524,7 +556,7 @@ func client(me int, mongoSession *mgo.Session, db string, collection string) {
 					continue
 				}
 
-				debug("%s", reply)
+				debug("REPLY %s", reply)
 				//unpack reply  here
 				replySerial, err := GetReply(reply)
 				if err != nil {
@@ -559,7 +591,7 @@ func client(me int, mongoSession *mgo.Session, db string, collection string) {
 					retriesLeft = 10
 				}
 
-				if sequence > 1000 {
+				if sequence > Grebalance {
 					sequence = 1 //rewind to prevent overflow, highwater mark is set at 1000 by default
 				}
 

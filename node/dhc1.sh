@@ -18,11 +18,13 @@ apt-get -y update
 # Install latest stable version of MongoDB
 apt-get install -y mongodb-org=2.6.1 mongodb-org-server=2.6.1 mongodb-org-shell=2.6.1 mongodb-org-mongos=2.6.1 mongodb-org-tools=2.6.1
 
+cat /vagrant/crontab/rotate_mongo_log | crontab
+
 #standar dmongo conf
 cp /vagrant/etc/mongod.conf /etc/
 
 #monit script
-cp /vagrant/etc/monit/conf.d/mongo /etc/monit/conf.d/
+cp /vagrant/etc/mongod_node.conf /etc/mongod.conf
 
 
 /etc/init.d/mongod restart
@@ -79,6 +81,10 @@ cp /vagrant/etc/logrotate.d/fortinet  /etc/logrotate.d/
 #cleaner config
 cp /vagrant/etc/fortihealth/cleaner.cfg /etc/fortihealth/
 sed -i 's/THISNODEID/dhc1/g' /etc/fortihealth/cleaner.cfg
+
+#modify prefered server order
+sed -i 's/MYTARGETS/tcp:\/\/192.168.82.100:6455,tcp:\/\/192.168.82.110:6455,tcp:\/\/192.168.82.120:6455/g' /etc/fortihealth/cleaner.cfg
+
 
 #cleaner binary
 cp /vagrant/bin/cleaner /var/fortihealth/cleaner

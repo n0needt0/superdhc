@@ -20,7 +20,7 @@ apt-get -y update
 sudo apt-get install -y mongodb-org=2.6.1 mongodb-org-server=2.6.1 mongodb-org-shell=2.6.1 mongodb-org-mongos=2.6.1 mongodb-org-tools=2.6.1
 
 #standar dmongo conf
-cp /vagrant/etc/mongod.conf /etc/
+ccp /vagrant/etc/mongod_node.conf /etc/mongod.conf
 
 #monit script
 cp /vagrant/etc/monit/conf.d/mongo /etc/monit/conf.d/
@@ -98,6 +98,8 @@ cp /vagrant/etc/logrotate.d/fortinet  /etc/logrotate.d/
 #cleaner config
 cp /vagrant/etc/fortihealth/cleaner.cfg /etc/fortihealth/
 sed -i 's/THISNODEID/dhc3/g' /etc/fortihealth/cleaner.cfg
+
+sed -i 's/MYTARGETS/tcp:\/\/192.168.82.120:6455,tcp:\/\/192.168.82.110:6455,tcp:\/\/192.168.82.100:6455/g' /etc/fortihealth/cleaner.cfg
 
 #cleaner binary
 cp /vagrant/bin/cleaner /var/fortihealth/cleaner

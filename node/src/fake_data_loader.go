@@ -11,22 +11,22 @@ import (
 )
 
 type Hc struct {
-	Id            bson.ObjectId `json:"id" bson:"_id,omitempty"`
-	HealthcheckId string
-	BusyTs        int64
-	RunEverySec   int
-	LastRunTs     int64
-	NextRunTs     int64
-	OwnerId       string
-	HcClass       string
-	State         int
-	History       map[string]interface{}
-	TestConf      map[string]interface{}
-	AlertConf     map[string]interface{}
+	Id          bson.ObjectId `bson:"_id,omitempty" json:"id"`               //Can we make _id to be our internal index
+	Hcid        string        `bson:"HEalthId,omitempty" json:"hcid,string"` //this is legacy healthcheck it same as in db
+	BusyTs      int64         `bson:",minsize" json:"busyts,string"`
+	RunEverySec int           // `bson:",omitempty" json:"everysec,string"`
+	LastRunTs   int64         // `bson:",omitempty" json:"lastts,string"`
+	NextRunTs   int64         // `bson:",omitempty" json:"nextts,string"`
+	HcClass     string
+	State       int
+	History     map[string]string
+	TestConf    map[string]string
+	AlertConf   map[string]string
+	expireAt    time.Time
 }
 
 func main() {
-	session, err := mgo.Dial("192.168.42.100:27017,192.168.42.110:27017,192.168.42.120:27017")
+	session, err := mgo.Dial("192.168.82.100:27017,192.168.82.110:27017,192.168.82.120:27017")
 
 	if err != nil {
 		fmt.Printf("%s", err)
@@ -60,22 +60,22 @@ func main() {
 
 	//populate
 
-	for i := 0; i < 10000000192.168.2.105; i++ {
+	for i := 0; i < 10; i++ {
 
 		err = c.Insert(&Hc{
 			//
 
-			HealthcheckId: fmt.Sprintf("id %d", i),
-			BusyTs:        time.Now().Unix() - 6,
-			RunEverySec:   60,
-			LastRunTs:     time.Now().Unix(),
-			NextRunTs:     time.Now().Unix(),
-			OwnerId:       fmt.Sprintf("owner %d", i),
-			HcClass:       fmt.Sprintf("testclass %d", i),
-			State:         1,
-			History:       make(map[string]interface{}),
-			TestConf:      make(map[string]interface{}),
-			AlertConf:     make(map[string]interface{}),
+			Hcid:        fmt.Sprintf("id %d", i),
+			BusyTs:      time.Now().Unix() - 6,
+			RunEverySec: 60,
+			LastRunTs:   time.Now().UnixNano(),
+			NextRunTs:   time.Now().Unix(),
+			HcClass:     fmt.Sprintf("testclass %d", i),
+			State:       1,
+			History:     make(map[string]string),
+			TestConf:    make(map[string]string),
+			AlertConf:   make(map[string]string),
+			expireAt:    time.Now(),
 		})
 
 		if err != nil {

@@ -30,7 +30,7 @@ var err error
 
 //the followign are flags passed from commandline
 var logdebug *bool = flag.Bool("debug", false, "enable debug logging")
-var Configfile *string = flag.String("config", "/etc/fortihealth/home.cfg", "Config file /etc/fortihealth/home.cfg location")
+var Configfile *string = flag.String("config", "/etc/fortihealth/home-node.cfg", "Config file /etc/fortihealth/home-node.cfg location")
 var help *bool = flag.Bool("help", false, "Show options")
 var cfg ini.File
 

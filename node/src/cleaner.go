@@ -48,6 +48,7 @@ var cfg ini.File
 var Gdb, Gcollection, Gnodeid string
 var GReportHome bool = true //always report home
 var Gttl int64
+var Grebalance int
 
 var GStats = struct {
 	RateCounter     *ratecounter.RateCounter
@@ -291,6 +292,16 @@ func main() {
 
 	Gttl = int64(ittl)
 
+	strrebalance, ok := cfg.Get("zmq", "rebalance")
+	if !ok {
+		log.Fatal("FATAL: 'rebalance' missing from 'zmq' section")
+	}
+
+	Grebalance, err = strconv.Atoi(strrebalance)
+	if err != nil {
+		log.Fatal("FATAL: 'strrebalance' parameter malformed in 'zmq' section")
+	}
+
 	reps, ok := cfg.Get("system", "reporthome")
 	if ok {
 		if repb, err := strconv.ParseBool(reps); err == nil {
@@ -479,6 +490,8 @@ func client(me int, mongoSession *mgo.Session, db string, collection string) {
 
 	serial := "" //serial number for each request
 
+	TargetCnt := len(HA.Servers)
+
 	for sequence, retriesLeft := 1, NumofRetries; retriesLeft > 0; sequence++ {
 
 		if *delay {
@@ -491,9 +504,34 @@ func client(me int, mongoSession *mgo.Session, db string, collection string) {
 			retriesLeft = 100
 		}
 
-		if sequence > 1000 {
-			//rewind to prevent overflow, highwater mark is set at 1000 by default
+		if sequence > Grebalance {
+
+			//rewind to prevent overflow
 			sequence = 1
+
+			//also good time to  rebalance to prefered servers
+			//prefered server is first in [zmq] target list.
+			//in case of failover even this will re try correct server
+
+			if TargetCnt > 1 && homeserver != HA.Servers[0] {
+				homeserverindex = 0
+				homeserver = GetHaServer(HA.Servers, homeserverindex)
+				log.Printf("INFO: Rebalancing Home Server %s, %d", homeserver, homeserverindex)
+
+				client.SetLinger(0)
+				client.Close()
+
+				client, err = context.NewSocket(zmq.REQ)
+				if err != nil {
+					log.Fatalf("FATAL: can not start worker %s", err)
+				}
+
+				err = client.Connect(homeserver)
+				if err != nil {
+					log.Fatalf("FATAL: can not connect worker %s", err)
+				}
+
+			}
 		}
 
 		//PRE REQUEST WORK//
@@ -596,7 +634,7 @@ func client(me int, mongoSession *mgo.Session, db string, collection string) {
 					retriesLeft = 10
 				}
 
-				if sequence > 1000 {
+				if sequence > Grebalance {
 					sequence = 1 //rewind to prevent overflow, highwater mark is set at 1000 by default
 				}
 

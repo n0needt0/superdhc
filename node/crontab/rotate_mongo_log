@@ -1,0 +1,1 @@
+0 */12 * * *  mongo admin --eval "printjson(db.runCommand(\"logRotate\"))" --port 27017
