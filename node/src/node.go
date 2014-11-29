@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"container/list"
 	"encoding/json"
 	"flag"
@@ -75,7 +76,12 @@ var GetReply = func(JsonMsg []byte) ([]byte, error) {
 		LOAD:   make(map[string]interface{}),
 	}
 
-	err := json.Unmarshal(JsonMsg, &msg)
+	d := json.NewDecoder(bytes.NewReader(JsonMsg))
+	d.UseNumber()
+
+	if err := d.Decode(&msg); err != nil {
+		msg.ERROR = err
+	}
 
 	if err != nil {
 		msg.ERROR = err

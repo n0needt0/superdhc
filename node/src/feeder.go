@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	zmq "github.com/alecthomas/gozmq"
+	"github.com/gorhill/cronexpr"
 	"github.com/gorilla/pat"
 	"github.com/paulbellamy/ratecounter"
 	"github.com/vaughan0/go-ini"
@@ -87,30 +88,32 @@ func GetHaServer(servers []string, i int) string {
 
 //health check structure
 type Hc struct {
-	//Id          bson.ObjectId `json:"id,string" bson:"_id,omitempty"`
-	BusyTs      int32 `json:"bts,string" bson:"bts"`
+	Id          bson.ObjectId `json:"id" bson:"_id,omitempty"`
+	BusyTs      int32         `json:"bts" bson:"bts"`
+	Sn          string
+	L5          []interface{}
 	IntervalSec int32 `json:"ints" bson:"ints"`
 	Cron        string
-	LastRunTs   int32 `json:"lr,string" bson:"lr"`
-	NextRunTs   int32 `json:"nr,string" bson:"nr"`
+	LastRunTs   int32 `json:"lr" bson:"lr"`
+	NextRunTs   int32 `json:"nr" bson:"nr"`
 	Hcid        string
 	HcType      string `json:"hctype" bson:"hct"`
-	Ver         int32  `json:"v,string" bson:"v"`
+	Ver         int32  `json:"v" bson:"v"`
 	Skip        []string
 	Meta        map[string]interface{}
-	UpdatedTs   int32 `json:"upd,string" bson:"upd"`
+}
+
+type Msg struct {
+	SERIAL string
+	TS     int64
+	ERROR  error
+	LOAD   Hc
 }
 
 //*****Processor helper function
-
 var GetRequest = func(serial string, load Hc) ([]byte, error) {
 
-	var msg = struct {
-		SERIAL string
-		TS     int64
-		ERROR  error
-		LOAD   Hc
-	}{
+	var msg = Msg{
 		SERIAL: serial,
 		TS:     time.Now().Unix(),
 		ERROR:  nil,
@@ -125,31 +128,21 @@ var GetRequest = func(serial string, load Hc) ([]byte, error) {
 	return jsonstr, nil
 }
 
-var GetReply = func(JsonMsg []byte) (string, error) {
-	var msg = struct {
-		SERIAL string
-		TS     int64
-		ERROR  error
-		LOAD   Hc
-	}{
-		SERIAL: "",
-		TS:     0,
-		ERROR:  nil,
-		LOAD:   Hc{},
-	}
+var GetReply = func(JsonMsg []byte) (Msg, error) {
+	var msg = Msg{}
 
 	d := json.NewDecoder(bytes.NewReader(JsonMsg))
 	d.UseNumber()
 
 	if err := d.Decode(&msg); err != nil {
-		return "", err
+		return Msg{}, err
 	}
 
 	if msg.ERROR != nil {
-		return msg.SERIAL, msg.ERROR
+		return Msg{}, msg.ERROR
 	}
 
-	return msg.SERIAL, nil
+	return msg, nil
 }
 
 /**
@@ -349,7 +342,7 @@ func main() {
 
 	// Unique Index
 	index := mgo.Index{
-		Key:        []string{"healthcheckid"},
+		Key:        []string{"hcid"},
 		Unique:     true,
 		DropDups:   true,
 		Background: true,
@@ -363,7 +356,14 @@ func main() {
 	}
 
 	// search index
-	err = c.EnsureIndexKey("bts", "nr")
+	err = c.EnsureIndexKey("bts", "nr", "skip")
+	if err != nil {
+		log.Printf("%s", err)
+		os.Exit(1)
+	}
+
+	// search serial index
+	err = c.EnsureIndexKey("sn")
 	if err != nil {
 		log.Printf("%s", err)
 		os.Exit(1)
@@ -486,15 +486,20 @@ func client(me int, mongoSession *mgo.Session, db string, collection string) {
 				if err != nil {
 					log.Fatalf("FATAL: can not connect worker %s", err)
 				}
-
 			}
 		}
 
-		//PRE REQUEST WORK//
-		query := bson.M{"bts": 0, "nr": bson.M{"$lt": int(time.Now().Unix())}}
+		//PRE REQUEST WORKout//
+		//Get data serial number for request
+		//grab most due , unlocked task for this node
+		//lock it
+
+		serial = MakeSerial(Gnodeid, me, sequence)
+
+		query := bson.M{"bts": 0, "nr": bson.M{"$lt": int(time.Now().Unix())}, "skip": bson.M{"$nin": [...]string{Gnodeid}}}
 
 		change := mgo.Change{
-			Update:    bson.M{"$set": bson.M{"bts": int(time.Now().Unix())}},
+			Update:    bson.M{"$set": bson.M{"bts": int(time.Now().Unix()), "lr": int(time.Now().Unix()), "sn": serial}},
 			ReturnNew: true,
 		}
 
@@ -519,10 +524,7 @@ func client(me int, mongoSession *mgo.Session, db string, collection string) {
 		}
 
 		//reset sleep on each real work
-		sleepTime = 100
-
-		//Get data for request
-		serial = MakeSerial(Gnodeid, me, sequence)
+		sleepTime = 10
 
 		data, err := GetRequest(serial, healthcheck)
 		if err != nil {
@@ -558,14 +560,57 @@ func client(me int, mongoSession *mgo.Session, db string, collection string) {
 
 				debug("REPLY %s", reply)
 				//unpack reply  here
-				replySerial, err := GetReply(reply)
+				ReplyMsg, err := GetReply(reply)
 				if err != nil {
 					log.Printf("WARNING: GetReply:%s : %s", serial, err)
 					continue
 				}
 
-				if replySerial == serial {
-					debug(fmt.Sprintf("OK seq:%s rep:%s", serial, replySerial))
+				if ReplyMsg.SERIAL == serial {
+
+					debug(fmt.Sprintf("OK seq:%s rep:%s", serial, ReplyMsg.SERIAL))
+					//ok reply returned see whats going on with it
+					//but first unlock the locked hc and set next run time along with result snap
+
+					cronexp, ok := cronexpr.Parse(ReplyMsg.LOAD.Cron)
+
+					nr := int32(time.Now().Unix() + 300)
+
+					now := time.Now()
+					next := now
+
+					if ok == nil {
+						next = cronexp.Next(now)
+						nr = int32(next.Unix())
+					}
+
+					debug(fmt.Sprintf("setting time to run: now: %s, cron: %s, next: %s", now, ReplyMsg.LOAD.Cron, next))
+
+					ReplyMsg.LOAD.L5[0] = ReplyMsg.LOAD.L5[1]
+					ReplyMsg.LOAD.L5[1] = ReplyMsg.LOAD.L5[2]
+					ReplyMsg.LOAD.L5[2] = ReplyMsg.LOAD.L5[3]
+					ReplyMsg.LOAD.L5[3] = ReplyMsg.LOAD.L5[4]
+					ReplyMsg.LOAD.L5[4] = true
+
+					query := bson.M{"sn": ReplyMsg.SERIAL}
+
+					change := mgo.Change{
+						Update:    bson.M{"$set": bson.M{"bts": 0, "nr": nr, "l5": ReplyMsg.LOAD.L5}},
+						ReturnNew: true,
+					}
+
+					healthcheck := Hc{} //Return query object into this
+
+					debug(fmt.Sprintf("query %v", query))
+
+					info, err := c.Find(query).Apply(change, &healthcheck)
+					if err != nil {
+						debug(fmt.Sprintf("Result running query %v, %s, %v", info, err, query))
+					}
+
+					debug("unlocked %+v", healthcheck)
+
+					//deal with local stats here
 					retriesLeft = NumofRetries
 					GStats.Lock()
 					GStats.ConsecutiveDead = 0
@@ -573,7 +618,7 @@ func client(me int, mongoSession *mgo.Session, db string, collection string) {
 					GStats.Unlock()
 					expectReply = false
 				} else {
-					log.Printf("WARNING: SEQ Mismatch: req: %s rep:%s", serial, replySerial)
+					log.Printf("WARNING: SEQ Mismatch: req: %s rep:%s", serial, ReplyMsg.SERIAL)
 					continue
 				}
 			} else if retriesLeft--; retriesLeft == 0 {

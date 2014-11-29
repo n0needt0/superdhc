@@ -1,0 +1,59 @@
+ALL
+IN
+
+ctype, protocol, host, port, timeout
+
+OUT
+err
+status [true, false]
+time_ms
+
+
+//***
+DNS
+host
+record_types =   'DNS_A',
+                            'DNS_CNAME',
+                            'DNS_HINFO',
+                            'DNS_MX',
+                            'DNS_NS',
+                            'DNS_PTR',
+                            'DNS_SOA',
+                            'DNS_TXT',
+                            'DNS_AAAA',
+                            'DNS_SRV',
+                            'DNS_NAPTR',
+                            'DNS_A6',
+                            'DNS_ALL',
+                            'DNS_ANY'
+                            ;
+default DNS_ANY
+//***
+
+TCP
+//none
+
+PING
+percent_loss_limit
+packets 1..10
+packet_size 10 ... 100
+
+return
+'state'  => HEALTH_STATE_NO_RESULTS,
+      'rt_min' => null,
+      'rt_max' => null,
+      'rt_avg' => null,
+      'rt_std' => null,
+      'loss_%' => null
+
+HTTP
+Method: GET,POSTHEAD
+Protocol: Http, Https
+Port:
+Url:
+
+headers map[string]string
+post_fields map[string]string
+
+success code
+
