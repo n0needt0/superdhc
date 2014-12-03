@@ -1,6 +1,6 @@
-/var/log/fortihealth/*.log {
-       weekly
-       rotate 10
+/var/log/dhc4/*.log {
+       daily
+       rotate 52
        copytruncate
        delaycompress
        compress

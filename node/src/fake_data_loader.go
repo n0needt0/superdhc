@@ -40,7 +40,7 @@ func main() {
 
 	// Unique Index
 	index := mgo.Index{
-		Key:        []string{"healthcheckid"},
+		Key:        []string{"hcid"},
 		Unique:     true,
 		DropDups:   true,
 		Background: true,
@@ -53,7 +53,7 @@ func main() {
 	}
 
 	// search index
-	err = c.EnsureIndexKey("bysyts", "nextrunts")
+	err = c.EnsureIndexKey("bts", "nr")
 	if err != nil {
 		fmt.Printf("%s", err)
 	}

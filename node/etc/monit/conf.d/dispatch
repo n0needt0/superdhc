@@ -1,9 +1,9 @@
 #!monit
 set logfile /var/log/monit.log
 
-check process feeder with pidfile "/var/run/feeder.pid"
-    start program = "/sbin/start feeder"
-    stop program  = "/sbin/stop feeder"
+check process feeder with pidfile "/var/run/dispatch.pid"
+    start program = "/sbin/start dispatch"
+    stop program  = "/sbin/stop dispatch"
     if failed port 7074 protocol HTTP
         request /health
         with timeout 10 seconds

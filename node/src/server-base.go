@@ -34,6 +34,9 @@ var Configfile *string = flag.String("config", "dhchome.cfg", "Config file locat
 var help *bool = flag.Bool("help", false, "Show options")
 var cfg ini.File
 
+var Gremote bool      //whether or note remote config reload enabled
+var Gremotekey string //key for reload
+
 //uris for front facing and back facing connections
 var Gbackuri, Gfronturi string
 

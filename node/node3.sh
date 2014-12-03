@@ -58,67 +58,85 @@ ldconfig
 
 cd ..
 
+cd ..
+
 rm -rf zeromq-3.2.5
 
+mongo --host 192.168.42.100 << 'EOF'
+config = { _id: "rs0", members:[
+          { _id : 0, host : "192.168.42.100:27017"},
+          { _id : 1, host : "192.168.42.110:27017"},
+          { _id : 2, host : "192.168.42.120:27017"} ]
+         };
+rs.initiate(config);
+
+rs.status();
+
+EOF
+
+
+/etc/init.d/mongod restart
+
 #create log directory
-mkdir -p /var/log/fortihealth
-chmod 777 /var/log/fortihealth
+mkdir -p /var/log/dhc4
+chmod 777 /var/log/dhc4
 
-#create fortinet config dir
-mkdir -p /etc/fortihealth
-chmod 777 /etc/fortihealth
+#create dhc4 config dir
+mkdir -p /etc/dhc4
+chmod 777 /etc/dhc4
 
-#create fortihealth binary dir
-mkdir -p /var/fortihealth
-chmod 777 /var/fortihealth
+#create dhc4 binary dir
+mkdir -p /var/dhc4
+chmod 777 /var/dhc4
 
 #install log rotate
-cp /vagrant/etc/logrotate.d/fortinet  /etc/logrotate.d/
+cp /vagrant/etc/logrotate.d/dhc4  /etc/logrotate.d/
 
 #INSTALL CLEANER
 #cleaner config
-cp /vagrant/etc/fortihealth/cleaner.cfg /etc/fortihealth/
-sed -i 's/THISNODEID/dhc2/g' /etc/fortihealth/cleaner.cfg
+cp /vagrant/etc/dhc4/cleaner.cfg /etc/dhc4/
+sed -i 's/THISNODEID/node3/g' /etc/dhc4/cleaner.cfg
 
-#modify prefered server order
-sed -i 's/MYTARGETS/tcp:\/\/192.168.82.110:6455,tcp:\/\/192.168.82.100:6455,tcp:\/\/192.168.82.120:6455/g' /etc/fortihealth/cleaner.cfg
-
+sed -i 's/MYTARGETS/tcp:\/\/192.168.82.120:6455,tcp:\/\/192.168.82.110:6455,tcp:\/\/192.168.82.100:6455/g' /etc/dhc4/cleaner.cfg
 
 #cleaner binary
-cp /vagrant/bin/cleaner /var/fortihealth/cleaner
-chmod 777 /var/fortihealth/cleaner
+cp /vagrant/bin/cleaner /var/dhc4/cleaner
+chmod 777 /var/dhc4/cleaner
 
 #cleaner monit and init files
 cp /vagrant/etc/init/cleaner.conf /etc/init/
 cp /vagrant/etc/monit/conf.d/cleaner /etc/monit/conf.d/
 
+/etc/init.d/mongodb restart
+
 /sbin/stop cleaner
 /sbin/start cleaner
 
-#INSTALL FEEDER
-#feeder config
-cp /vagrant/etc/fortihealth/feeder.cfg /etc/fortihealth/
-sed -i 's/THISNODEID/dhc2/g' /etc/fortihealth/feeder.cfg
 
-#feeder binary
-cp /vagrant/bin/feeder /var/fortihealth/feeder
-chmod 777 /var/fortihealth/feeder
+#INSTALL dispatch
+#dispatch config
+cp /vagrant/etc/dhc4/dispatch.cfg /etc/dhc4/
+sed -i 's/THISNODEID/node3/g' /etc/dhc4/dispatch.cfg
 
-#feeder monit and init files
-cp /vagrant/etc/init/feeder.conf /etc/init/
-cp /vagrant/etc/monit/conf.d/feeder /etc/monit/conf.d/
+#dispatch binary
+cp /vagrant/bin/dispatch /var/dhc4/dispatch
+chmod 777 /var/dhc4/dispatch
 
-/sbin/stop feeder
-/sbin/start feeder
+#dispatch monit and init files
+cp /vagrant/etc/init/dispatch.conf /etc/init/
+cp /vagrant/etc/monit/conf.d/dispatch /etc/monit/conf.d/
+
+/sbin/stop dispatch
+/sbin/start dispatch
 
 #INSTALL NODE
 #node config
-cp /vagrant/etc/fortihealth/node.cfg /etc/fortihealth/
-sed -i 's/THISNODEID/dhc2/g' /etc/fortihealth/node.cfg
+cp /vagrant/etc/dhc4/node.cfg /etc/dhc4/
+sed -i 's/THISNODEID/node3/g' /etc/dhc4/node.cfg
 
 #node binary
-cp /vagrant/bin/node /var/fortihealth/node
-chmod 777 /var/fortihealth/node
+cp /vagrant/bin/node /var/dhc4/node
+chmod 777 /var/dhc4/node
 
 #node monit and init files
 cp /vagrant/etc/init/node.conf /etc/init/
@@ -134,7 +152,7 @@ apt-get -y update
 apt-get install ganglia-monitor -y
 
 cp /vagrant/etc/ganglia/gmond_node.conf /etc/ganglia/gmond.conf
-sed -i 's/THISNODEID/dhc2/g' /etc/ganglia/gmond.conf
+sed -i 's/THISNODEID/node3/g' /etc/ganglia/gmond.conf
 
 #install MongoDb Ganglia Support
  mkdir /usr/lib/ganglia/python_modules
@@ -146,4 +164,9 @@ sed -i 's/THISNODEID/dhc2/g' /etc/ganglia/gmond.conf
 
 /etc/init.d/ganglia-monitor restart
 
+###FAKEDATA INSERT####
+
+mongo 192.168.42.100:27017/test /vagrant/node_fakejson.js
+
 echo "done!"
+

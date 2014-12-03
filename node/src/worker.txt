@@ -1,7 +1,27 @@
 ALL
 IN
 
-ctype, protocol, host, port, timeout
+hctype, protocol, host, port, timeout
+
+type in struct{
+  hctype
+  protocol  tcp:// dns:// http:// https://
+  method  [post,get,head]
+  host
+  port
+  uri
+  put all in params?
+  headers map[string]string
+  params map[string]string
+  timeout
+}
+
+state bool
+out map[string]string
+
+
+
+
 
 OUT
 err
@@ -47,7 +67,7 @@ return
       'loss_%' => null
 
 HTTP
-Method: GET,POSTHEAD
+Method: GET,POST,HEAD
 Protocol: Http, Https
 Port:
 Url:
@@ -55,5 +75,16 @@ Url:
 headers map[string]string
 post_fields map[string]string
 
+
+
 success code
+success string
+success header
+
+data:
+       'state'  => $state,
+      'nsl_ms' => $namelookup_time,
+      'con_ms' => $connect_time,
+      'tfb_ms' => $ttfb,
+      'tot_ms' => $total_time
 

@@ -8,16 +8,17 @@ import (
 	"fmt"
 	zmq "github.com/alecthomas/gozmq"
 	"github.com/gorilla/pat"
+	logging "github.com/op/go-logging"
 	"github.com/paulbellamy/ratecounter"
 	"github.com/vaughan0/go-ini"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"reflect"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -25,15 +26,18 @@ import (
 
 //this is log file
 var logFile *os.File
+var logFormat = logging.MustStringFormatter("%{color}%{time:15:04:05.000000} %{shortfunc} ▶ %{level:.4s} %{id:03x}%{color:reset} %{message}")
+var log = logging.MustGetLogger("logfile")
+var Gloglevel logging.Level = logging.DEBUG
 
 //this where errors go to die
 var err error
 
 //the followign are flags passed from commandline
-var logdebug *bool = flag.Bool("debug", false, "enable debug logging")
-var Configfile *string = flag.String("config", "/etc/fortihealth/node.cfg", "Config file location default: /etc/fortihealth/node.cfg")
+var Configfile *string = flag.String("config", "/etc/dhc4/node.cfg", "Config file location default: /etc/fortihealth/node.cfg")
 var help *bool = flag.Bool("help", false, "Show options")
 var cfg ini.File
+var Gdebugdelay bool = false //debugdelay
 
 //uris for front facing and back facing connections
 var Gbackuri, Gfronturi string
@@ -67,12 +71,12 @@ var GetReply = func(JsonMsg []byte) ([]byte, error) {
 	var msg = struct {
 		SERIAL string
 		TS     int64
-		ERROR  error
+		ERROR  string
 		LOAD   map[string]interface{}
 	}{
 		SERIAL: "",
 		TS:     0,
-		ERROR:  nil,
+		ERROR:  "",
 		LOAD:   make(map[string]interface{}),
 	}
 
@@ -80,11 +84,7 @@ var GetReply = func(JsonMsg []byte) ([]byte, error) {
 	d.UseNumber()
 
 	if err := d.Decode(&msg); err != nil {
-		msg.ERROR = err
-	}
-
-	if err != nil {
-		msg.ERROR = err
+		msg.ERROR = fmt.Sprintf("remote err: %s", err)
 	}
 
 	jsonstr, err := json.Marshal(msg)
@@ -111,7 +111,7 @@ func WorkerSocket(context *zmq.Context) *zmq.Socket {
 
 	worker, err := context.NewSocket(zmq.DEALER)
 	if err != nil {
-		log.Fatalf("FATAL: can not start backend worker %s", err)
+		log.Fatalf("can not start backend worker %s", err)
 	}
 
 	err = worker.Connect(Gbackuri)
@@ -120,7 +120,7 @@ func WorkerSocket(context *zmq.Context) *zmq.Socket {
 	}
 
 	//  Tell queue we're ready for work
-	debug("worker ready")
+	log.Debug("worker ready")
 
 	err = worker.Send([]byte(PPP_READY), 0)
 
@@ -190,18 +190,18 @@ func main() {
 	cfg, err := ini.LoadFile(*Configfile)
 
 	if err != nil {
-		log.Fatal("FATAL: parse config "+*Configfile+" file error: %s", err)
+		log.Fatalf("parse config "+*Configfile+" file error: %s", err)
 	}
 
 	logfile, ok := cfg.Get("system", "logfile")
 	if !ok {
-		log.Fatal("FATAL: 'logfile' missing from 'system' section")
+		log.Fatalf("'logfile' missing from 'system' section")
 	}
 
 	//open log file
 	logFile, err := os.OpenFile(logfile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
-		log.Fatalf("FATAL: Log file error: %s %s", logfile, err)
+		log.Fatalf("Log file error: %s %s", logfile, err)
 	}
 
 	defer func() {
@@ -209,15 +209,26 @@ func main() {
 		logFile.Close()
 	}()
 
-	log.SetOutput(logFile)
+	logback := logging.NewLogBackend(logFile, "", 0)
+	logformatted := logging.NewBackendFormatter(logback, logFormat)
 
-	if *logdebug {
-		//see what we have here
-		for name, section := range cfg {
-			debug(fmt.Sprintf("Section: %v\n", name))
-			for k, v := range section {
-				debug(fmt.Sprintf("%v: %v\n", k, v))
-			}
+	loglevel, ok := cfg.Get("system", "loglevel")
+	if !ok {
+		log.Fatal("'loglevel' missing from 'system' section")
+	}
+
+	Gloglevel, err = logging.LogLevel(loglevel)
+	if err != nil {
+		Gloglevel = logging.DEBUG
+	}
+	logging.SetLevel(Gloglevel, "")
+	logging.SetBackend(logformatted)
+
+	//see what we have here
+	for name, section := range cfg {
+		log.Debug("Section: %v\n", name)
+		for k, v := range section {
+			log.Debug("%v: %v\n", k, v)
 		}
 	}
 
@@ -236,32 +247,39 @@ func main() {
 	//http server
 	httphost, ok := cfg.Get("http", "host")
 	if !ok {
-		log.Fatal("FATAL: 'host' missing from 'http' section")
+		log.Fatalf("'host' missing from 'http' section")
 	}
 
 	httpport, ok := cfg.Get("http", "port")
 	if !ok {
-		log.Fatal("FATAL: 'port' missing from 'http' section")
+		log.Fatalf("'port' missing from 'http' section")
 	}
 
 	strworkers, ok := cfg.Get("system", "workers")
 	if !ok {
-		log.Fatal("FATAL: 'workers' missing from 'system' section")
+		log.Fatalf("'workers' missing from 'system' section")
 	}
 
 	numworkers, err := strconv.Atoi(strworkers)
 	if err != nil {
-		log.Fatal("FATAL: 'workers' parameter malformed in 'system' section")
+		log.Fatalf("'workers' parameter malformed in 'system' section")
 	}
 
 	Gfronturi, ok = cfg.Get("zmq", "fronturi")
 	if !ok {
-		log.Fatal("FATAL: 'fronturi' uri string missing from 'zmq' section")
+		log.Fatalf("'fronturi' uri string missing from 'zmq' section")
 	}
 
 	Gbackuri, ok = cfg.Get("zmq", "backuri")
 	if !ok {
-		log.Fatal("FATAL: 'backuri' missing from 'zmq' section")
+		log.Fatalf("'backuri' missing from 'zmq' section")
+	}
+
+	ddelay, ok := cfg.Get("system", "debugdelay")
+	if ok {
+		if ddelayb, err := strconv.ParseBool(ddelay); err == nil {
+			Gdebugdelay = ddelayb
+		}
 	}
 
 	//we need to start 2 servers, http for status and zmq
@@ -272,14 +290,16 @@ func main() {
 
 		r := pat.New()
 		r.Get("/health", http.HandlerFunc(healthHandle))
+		r.Get("/loglevel/{loglevel}", http.HandlerFunc(logHandle))
+		r.Get("/delay", http.HandlerFunc(delayHandle))
 
 		http.Handle("/", r)
 
-		log.Printf("INFO: Listening %s : %s", httphost, httpport)
+		log.Notice("Listening %s : %s", httphost, httpport)
 
 		err = http.ListenAndServe(httphost+":"+httpport, nil)
 		if err != nil {
-			log.Fatalf("FATAL: ListenAndServe: %s", err)
+			log.Fatalf("ListenAndServe: %s", err)
 		}
 
 		wg.Done()
@@ -306,32 +326,32 @@ func main() {
 		// Prepare our context and sockets
 		context, err := zmq.NewContext()
 		if err != nil {
-			log.Fatalf("FATAL: starting zmq server context %s", err)
+			log.Fatalf("starting zmq server context %s", err)
 		}
 		defer context.Close()
 
 		//start service for outside connections
-		log.Printf("INFO: Zmq server starting %s", Gfronturi)
+		log.Info("Zmq server starting %s", Gfronturi)
 
 		frontend, err := context.NewSocket(zmq.ROUTER)
 		if err != nil {
-			log.Fatalf("FATAL: starting frontend zmq %s", err)
+			log.Fatalf("starting frontend zmq %s", err)
 		}
 		defer frontend.Close()
 		err = frontend.Bind(Gfronturi)
 		if err != nil {
-			log.Fatalf("FATAL: error binding frontend zmq %s", err)
+			log.Fatalf("error binding frontend zmq %s", err)
 		}
 
 		// start socket for internal workers connection
 		backend, err := context.NewSocket(zmq.ROUTER)
 		if err != nil {
-			log.Fatalf("FATAL: starting backend zmq %s", err)
+			log.Fatalf("starting backend zmq %s", err)
 		}
 		defer backend.Close()
 		err = backend.Bind(Gbackuri)
 		if err != nil {
-			log.Fatalf("FATAL:  binding backend zmq %s", err)
+			log.Fatalf(" binding backend zmq %s", err)
 		}
 
 		//prestart
@@ -346,7 +366,7 @@ func main() {
 					GStats.Rate = GStats.RateCounter.Rate()
 					GStats.Workers = workers.Len()
 					GStats.Unlock()
-					log.Printf("INFO: rate %d req/sec, workers %d", GStats.Rate, GStats.Workers)
+					log.Notice("rate %d req/sec, workers %d", GStats.Rate, GStats.Workers)
 				}
 			}
 		}()
@@ -369,7 +389,7 @@ func main() {
 			if items[0].REvents&zmq.POLLIN != 0 {
 				frames, err := backend.RecvMultipart(0)
 				if err != nil {
-					log.Printf("WARNING: receiving from back end %s", err)
+					log.Warning("receiving from back end %s", err)
 					//drop message to teh ground
 					continue
 				}
@@ -379,14 +399,16 @@ func main() {
 
 				//  Validate control message, or return reply to client
 				if msg := frames[1:]; len(msg) == 1 {
+
 					switch status := string(msg[0]); status {
 					case PPP_READY:
-						debug("I: PPWorker ready")
+						//log.Debug("rcv. ready")
 					case PPP_HEARTBEAT:
-						debug("I: PPWorker heartbeat")
+						//log.Debug("rcv. heartbeat")
 					default:
-						log.Printf("WARNING: Invalid message from worker: %v", msg)
+						log.Warning("Invalid message from worker: %v", msg)
 					}
+
 				} else {
 					GStats.RateCounter.Incr(int64(1))
 					frontend.SendMultipart(msg, 0)
@@ -397,7 +419,7 @@ func main() {
 				//  Now get next client request, route to next worker
 				frames, err := frontend.RecvMultipart(0)
 				if err != nil {
-					log.Printf("WARNING: receiving from front end %s", err)
+					log.Warning("receiving from front end %s", err)
 					//drop message to teh ground
 					continue
 				}
@@ -437,7 +459,7 @@ func worker() {
 
 	context, err := zmq.NewContext()
 	if err != nil {
-		log.Printf("WARNING: starting workers context %s", err)
+		log.Warning("starting workers context %s", err)
 		return
 	}
 	defer context.Close()
@@ -449,6 +471,7 @@ func worker() {
 	heartbeatAt := time.Now().Add(HEARTBEAT_INTERVAL)
 
 	for {
+
 		items := zmq.PollItems{
 			zmq.PollItem{Socket: worker, Events: zmq.POLLIN},
 		}
@@ -458,7 +481,7 @@ func worker() {
 		if items[0].REvents&zmq.POLLIN != 0 {
 			frames, err := worker.RecvMultipart(0)
 			if err != nil {
-				log.Printf("WARNING: worker error %s", err)
+				log.Warning("worker error %s", err)
 				worker.Close()
 			}
 
@@ -468,10 +491,10 @@ func worker() {
 				ReplyLoad, err := GetReply(frames[2])
 
 				if err != nil {
-					log.Printf("WARNING: GetReply %s", err)
+					log.Warning("GetReply %s", err)
 				}
 
-				debug("load %s", ReplyLoad)
+				log.Debug("load %s", ReplyLoad)
 
 				frames[2] = ReplyLoad
 
@@ -480,19 +503,21 @@ func worker() {
 
 				liveness = HEARTBEAT_LIVENESS
 
-				if *logdebug {
-					time.Sleep(10 * time.Millisecond)
+				if Gdebugdelay {
+					//this is if we set extra delay for debugging
+					log.Notice("Sleeping 1 sec..")
+					time.Sleep(time.Duration(1) * time.Second)
 				}
 
 			} else if len(frames) == 1 && string(frames[0]) == PPP_HEARTBEAT {
-				debug("I: Queue heartbeat")
+				//log.Debug("rcv. queue heartbeat")
 				liveness = HEARTBEAT_LIVENESS
 			} else {
-				debug("E: Invalid message")
+				log.Warning("rcv. invalid message")
 			}
 			interval = INTERVAL_INIT
 		} else if liveness--; liveness == 0 {
-			log.Printf("WARNING: Heartbeat failure, Reconnecting queue in %d sec...", interval/time.Second)
+			log.Warning("Heartbeat failure, Reconnecting queue in %d sec...", interval/time.Second)
 			time.Sleep(interval)
 			if interval < INTERVAL_MAX {
 				interval *= 2
@@ -516,6 +541,37 @@ func serve404(w http.ResponseWriter) {
 	io.WriteString(w, "Not Found")
 }
 
+func delayHandle(w http.ResponseWriter, r *http.Request) {
+
+	if Gdebugdelay {
+		Gdebugdelay = false
+	} else {
+		Gdebugdelay = true
+	}
+	log.Notice("Debug delay %t", Gdebugdelay)
+	io.WriteString(w, fmt.Sprintf("\ndelay: %t\n", Gdebugdelay))
+}
+
+func logHandle(w http.ResponseWriter, r *http.Request) {
+
+	loglevel := r.URL.Query().Get(":loglevel")
+
+	loglevel = strings.ToUpper(loglevel)
+
+	Gloglevel, err = logging.LogLevel(loglevel)
+	if err != nil {
+		Gloglevel = logging.DEBUG
+		loglevel = "DEBUG"
+	}
+
+	res := fmt.Sprintf("\nSeting log level to: %s \n Valid log levels are CRITICAL, ERROR,  WARNING, NOTICE, INFO, DEBUG\n", loglevel)
+
+	log.Notice(res)
+
+	logging.SetLevel(Gloglevel, "")
+	io.WriteString(w, res)
+}
+
 func healthHandle(w http.ResponseWriter, r *http.Request) {
 
 	res := make(map[string]string)
@@ -534,23 +590,10 @@ func healthHandle(w http.ResponseWriter, r *http.Request) {
 
 	b, err := json.Marshal(res)
 	if err != nil {
-		log.Println("error:", err)
+		log.Error("error: %s", err)
 	}
 
 	w.Write(b)
-	return
-}
-
-//Utilities
-//debuggin function dump
-func debug(format string, args ...interface{}) {
-	if *logdebug {
-		if len(args) > 0 {
-			log.Printf("DEBUG "+format, args)
-		} else {
-			log.Printf("DEBUG " + format)
-		}
-	}
 	return
 }
 
