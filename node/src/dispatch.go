@@ -195,20 +195,24 @@ func main() {
 		log.Fatal("'loglevel' missing from 'system' section")
 	}
 
+	loglevel = strings.ToUpper(loglevel)
+
 	Gloglevel, err = logging.LogLevel(loglevel)
 	if err != nil {
 		Gloglevel = logging.DEBUG
 	}
-	logging.SetLevel(Gloglevel, "")
+
 	logging.SetBackend(logformatted)
 
 	//see what we have here
 	for name, section := range cfg {
-		log.Debug("Section: %v\n", name)
+		log.Info("Section: %v\n", name)
 		for k, v := range section {
-			log.Debug("%v: %v\n", k, v)
+			log.Info("%v: %v\n", k, v)
 		}
 	}
+
+	logging.SetLevel(Gloglevel, "")
 
 	//kill channel to programatically
 	killch := make(chan os.Signal, 1)
@@ -250,9 +254,14 @@ func main() {
 		log.Fatal("'workers' parameter malformed in 'system' section")
 	}
 
-	targetstr, ok := cfg.Get("zmq", "targets")
+	uptargetstr, ok := cfg.Get("zmq", "uptargets")
 	if !ok {
-		log.Fatal("'targets' missing from 'zmq' section")
+		log.Fatal("'uptargets' missing from 'zmq' section")
+	}
+
+	downtargetstr, ok := cfg.Get("zmq", "downtargets")
+	if !ok {
+		log.Fatal("'downtargets' missing from 'zmq' section")
 	}
 
 	timeoutstr, ok := cfg.Get("zmq", "timeout")
@@ -465,7 +474,7 @@ func client(me int, mongoSession *mgo.Session, db string, collection string) {
 	}
 
 	homeserver, homeserverindex := GetRandomHaServer(HA.Servers)
-	log.Notice("Home Server %s, %d", homeserver, homeserverindex)
+	log.Debug("Home Server %s, %d", homeserver, homeserverindex)
 
 	if GReportHome {
 		//otherwise no reason to connect home even
@@ -495,7 +504,6 @@ func client(me int, mongoSession *mgo.Session, db string, collection string) {
 
 		if Gdebugdelay {
 			//this is if we set extra delay for debugging
-			log.Notice("Sleeping 1 sec..")
 			time.Sleep(time.Duration(1) * time.Second)
 		}
 
@@ -751,7 +759,7 @@ func logHandle(w http.ResponseWriter, r *http.Request) {
 		loglevel = "DEBUG"
 	}
 
-	res := fmt.Sprintf("\nSeting log level to: %s \n Valid log levels are CRITICAL, ERROR,  WARNING, NOTICE, INFO, DEBUG\n", loglevel)
+	res := fmt.Sprintf("\nSetting log level to: %s \n Valid log levels are CRITICAL, ERROR,  WARNING, NOTICE, INFO, DEBUG\n", loglevel)
 
 	log.Notice(res)
 

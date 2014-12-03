@@ -217,20 +217,24 @@ func main() {
 		log.Fatal("'loglevel' missing from 'system' section")
 	}
 
+	loglevel = strings.ToUpper(loglevel)
+
 	Gloglevel, err = logging.LogLevel(loglevel)
 	if err != nil {
 		Gloglevel = logging.DEBUG
 	}
-	logging.SetLevel(Gloglevel, "")
+
 	logging.SetBackend(logformatted)
 
 	//see what we have here
 	for name, section := range cfg {
-		log.Debug("Section: %v\n", name)
+		log.Info("Section: %v\n", name)
 		for k, v := range section {
-			log.Debug("%v: %v\n", k, v)
+			log.Info("%v: %v\n", k, v)
 		}
 	}
+
+	logging.SetLevel(Gloglevel, "")
 
 	//kill channel to programatically
 	killch := make(chan os.Signal, 1)
@@ -564,7 +568,7 @@ func logHandle(w http.ResponseWriter, r *http.Request) {
 		loglevel = "DEBUG"
 	}
 
-	res := fmt.Sprintf("\nSeting log level to: %s \n Valid log levels are CRITICAL, ERROR,  WARNING, NOTICE, INFO, DEBUG\n", loglevel)
+	res := fmt.Sprintf("\nSetting log level to: %s \n Valid log levels are CRITICAL, ERROR,  WARNING, NOTICE, INFO, DEBUG\n", loglevel)
 
 	log.Notice(res)
 
