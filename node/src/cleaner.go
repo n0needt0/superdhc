@@ -30,10 +30,20 @@ import (
 	"time"
 )
 
+const (
+	DB_HC          = "hc"
+	COL_HC         = "hc"
+	DB_HIST        = "hist"
+	COL_HIST       = "hist"
+	DB_EVENT       = "event"
+	COL_EVENT      = "event"
+	EXPIRESEC_HIST = 60
+)
+
 //this is log file
 var logFile *os.File
 var logFormat = logging.MustStringFormatter("%{color}%{time:15:04:05.000000} %{shortfunc} ▶ %{level:.4s} %{id:03x}%{color:reset} %{message}")
-var log = logging.MustGetLogger("logfile")
+var log = logging.MustGetLogger("cleaner")
 var Gloglevel logging.Level = logging.DEBUG
 
 //this where errors go to die
@@ -49,7 +59,6 @@ var Gttl int64
 var Grebalance int
 var Gdebugdelay bool = false //debugdelay
 var Ghwm int
-var GSwapBytes int64
 
 var GStats = struct {
 	RateCounter     *ratecounter.RateCounter
@@ -89,16 +98,15 @@ func GetHaServer(servers []string, i int) string {
 
 //health check structure
 type Hc struct {
-	Id        bson.ObjectId          `json:"id" bson:"_id,omitempty"`
-	BusyTs    int32                  `json:"bts" bson:"bts"`
-	Sn        string                 `json:"sn" bson:"sn"`
-	Cron      string                 `json:"cron" bson:"cron"`
-	LastRunTs int32                  `json:"lr" bson:"lr"`
-	NextRunTs int32                  `json:"nr" bson:"nr"`
-	Hcid      string                 `json:"hcid" bson:"hcid"`
-	HcType    string                 `json:"hctype" bson:"hct"`
-	Ver       int32                  `json:"v" bson:"v"`
-	Meta      map[string]interface{} `json:"meta" bson:"meta"`
+	BusyTs    int32 `json:"bts" bson:"bts"`
+	Sn        string
+	Cron      string
+	LastRunTs int32 `json:"lr" bson:"lr"`
+	NextRunTs int32 `json:"nr" bson:"nr"`
+	Hcid      string
+	HcType    string `json:"hct" bson:"hct"`
+	Ver       string `json:"v" bson:"v"`
+	Meta      map[string]interface{}
 }
 
 type Msg struct {
@@ -320,15 +328,6 @@ func main() {
 		hwmi, err := strconv.Atoi(hwmstr)
 		if err == nil && hwmi > 1000 {
 			Ghwm = hwmi
-		}
-	}
-
-	GSwapBytes = int64(0)
-	swapbytesstr, ok := cfg.Get("zmq", "swapbytes")
-	if ok {
-		swapbytesi, err := strconv.Atoi(swapbytesstr)
-		if err == nil && swapbytesi > 0 {
-			GSwapBytes = int64(swapbytesi)
 		}
 	}
 

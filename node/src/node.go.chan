@@ -1,19 +1,18 @@
 package main
 
 import (
-	dhc4ping "./dhc4/ping"
 	"GoStats/stats"
 	"bytes"
 	"container/list"
 	"encoding/json"
-	//"errors"
+	"errors"
 	"flag"
 	"fmt"
 	zmq "github.com/alecthomas/gozmq"
 	"github.com/gorilla/pat"
 	logging "github.com/op/go-logging"
 	"github.com/paulbellamy/ratecounter"
-
+	"github.com/tatsushid/go-fastping"
 	"github.com/vaughan0/go-ini"
 	"io"
 	"net"
@@ -40,6 +39,7 @@ const (
 	STATS_WINDOW_SECONDS = 60
 	HEALTH_STATE_UP      = 1
 	HEALTH_STATE_DOWN    = 0
+	TIMEOUT_DNS_MS       = 200
 )
 
 //this is log file
@@ -48,6 +48,9 @@ var logFormat = logging.MustStringFormatter("%{color}%{time:15:04:05.000000} %{s
 var log = logging.MustGetLogger("logfile")
 var Gloglevel logging.Level = logging.DEBUG
 var GTestStats []string = []string{"ping_total_ms"}
+
+//this where errors go to die
+var err error
 
 //the followign are flags passed from commandline
 var Configfile *string = flag.String("config", "/etc/dhc4/node.cfg", "Config file location default: /etc/fortihealth/node.cfg")
@@ -85,33 +88,130 @@ type Hc struct {
 	Meta      map[string]interface{}
 }
 
-type HcTester interface {
-	DoTest(map[string]interface{}) error
-}
+//ping stuff
 
-//ping headers
 type response struct {
 	addr *net.IPAddr
 	rtt  time.Duration
 }
 
-type TimeoutMsec struct {
-	Overall   int
-	Dns       int
-	Test      int
-	AfterTest int
-}
-
 type HcPing struct {
-	Host        string
-	TimeoutMsec TimeoutMsec //Various timeouts
-	Plossok     float32     //percent loss
-	Packets     int         //we use 4 iterations to test by default up to 10 otherwise
-	Size        int         //packet byte size 10 to 100
-	Res         map[string]interface{}
+	Host       string
+	Timeoutsec int     //sec timeout
+	Plossok    float32 //percent loss
+	Packets    int     //we use 4 iterations to test by default up to 10 otherwise
+	Size       int     //packet byte size 10 to 100
+	Res        map[string]interface{}
 }
 
-//ping headers
+type HcTester interface {
+	DoTest() error
+}
+
+func (hcping *HcPing) DoTest() error {
+
+	//this is basic ping spec same as before
+	testStart := makeTimestamp()
+
+	hcping.Res["state"] = HEALTH_STATE_DOWN //it is not working unless noted otherwise
+	packetsDelivered := 0
+	hcping.Res["loss_%"] = float64(100)
+
+	//this guy will held our stats for us
+	var rt_stats stats.Stats
+
+	ra, err := ResolveIPWithTimeout(hcping.Host, TIMEOUT_DNS_MS)
+	if err != nil {
+		return err
+	}
+
+	//time to resolv	e DNS
+	dns_start := makeTimestamp()
+
+	p := fastping.NewPinger()
+
+	hcping.Res["dns_ms"] = makeTimestamp() - dns_start
+
+	results := make(map[string]*response)
+	results[ra.String()] = nil
+
+	p.AddIPAddr(ra)
+
+	onRecv, onIdle := make(chan *response), make(chan bool)
+	p.OnRecv = func(addr *net.IPAddr, t time.Duration) {
+		onRecv <- &response{addr: addr, rtt: t}
+	}
+	p.OnIdle = func() {
+		onIdle <- true
+	}
+
+	p.MaxRTT = time.Second
+	i := 0
+	p.RunLoop()
+
+loop:
+
+	for i < hcping.Packets {
+		select {
+
+		case res := <-onRecv:
+			if _, ok := results[res.addr.String()]; ok {
+				results[res.addr.String()] = res
+			}
+		case <-onIdle:
+			for host, r := range results {
+				if r == nil {
+					rt_stats.Update(0)
+					log.Warning("PING %s : unreachable %v", host, time.Now())
+
+				} else {
+					rt_ms := int(r.rtt.Nanoseconds() / int64(time.Millisecond))
+					rt_stats.Update(float64(rt_ms))
+					packetsDelivered++
+					log.Debug("PING %d: %s : %v %v", i, host, r.rtt.Nanoseconds()/int64(time.Millisecond), time.Now())
+				}
+				results[host] = nil
+				i++
+			}
+		case <-p.Done():
+			if err = p.Err(); err != nil {
+				msg := fmt.Sprintf("PING failed: %s", err)
+				log.Warning(msg)
+				hcping.Res["msg"] = msg
+			}
+			break loop
+		}
+	}
+	p.Stop()
+
+	hcping.Res["sent"] = hcping.Packets
+	hcping.Res["sent_ok"] = packetsDelivered
+
+	loss := float32(100 * (hcping.Packets - packetsDelivered) / hcping.Packets)
+	hcping.Res["loss_%"] = loss
+	if loss < hcping.Plossok {
+		hcping.Res["state"] = HEALTH_STATE_UP
+	} else {
+		hcping.Res["msg"] = fmt.Sprintf("%f%% packet loss", loss)
+	}
+
+	hcping.Res["rt_min"] = rt_stats.Min()
+	hcping.Res["rt_max"] = rt_stats.Max()
+	hcping.Res["rt_avg"] = rt_stats.Mean()
+	hcping.Res["rt_std"] = rt_stats.SampleStandardDeviation()
+
+	totalTestTime := makeTimestamp() - testStart
+
+	hcping.Res["total_ms"] = totalTestTime
+
+	GStats.Details["ping_total_ms"].Update(float64(totalTestTime))
+
+	log.Debug("PING RESULT %+v", hcping.Res)
+	log.Debug("PING Exit %s", hcping.Host)
+	return nil
+}
+
+//ping stuff
 
 type Msg struct {
 	SERIAL string
@@ -433,10 +533,10 @@ func main() {
 					for _, stat_name := range GTestStats {
 						//only if observed
 						if GStats.Details[stat_name].Count() > 0 {
-							log.Notice("SYS %s Count:  %d", stat_name, GStats.Details[stat_name].Count())
-							log.Notice("SYS %s Min:  %f", stat_name, GStats.Details[stat_name].Min())
-							log.Notice("SYS %s Max:  %f", stat_name, GStats.Details[stat_name].Max())
-							log.Notice("SYS %s Mean:  %f", stat_name, GStats.Details[stat_name].Mean())
+							log.Info("SYS %s Count:  %d", stat_name, GStats.Details[stat_name].Count())
+							log.Info("SYS %s Min:  %f", stat_name, GStats.Details[stat_name].Min())
+							log.Info("SYS %s Max:  %f", stat_name, GStats.Details[stat_name].Max())
+							log.Info("SYS %s Mean:  %f", stat_name, GStats.Details[stat_name].Mean())
 						}
 					}
 
@@ -446,7 +546,7 @@ func main() {
 					}
 
 					GStats.Unlock()
-					log.Notice("SYS: for last %d sec: rate %d req/sec, workers %d", STATS_WINDOW_SECONDS, GStats.Rate, GStats.Workers)
+					log.Info("SYS: for last %d sec: rate %d req/sec, workers %d", STATS_WINDOW_SECONDS, GStats.Rate, GStats.Workers)
 				}
 			}
 		}()
@@ -589,49 +689,84 @@ func worker() {
 				//	log.Info("%s test params %v", hctype, msg.HC.Meta)
 
 				case "PING":
-					testStart := makeTimestamp()
-
-					//chanel on which results if any will come from the ping
-					reschan := make(chan map[string]interface{})
-
 					log.Debug("%s spec %v", hctype, msg.HC.Meta)
+					hcping := &HcPing{
+						"",
+						2,
+						0,
+						4,
+						34,
+						make(map[string]interface{}),
+					}
 
-					//return ping struct with proposed config, will fill in default values
-					hcping, err := dhc4ping.NewPing(msg.HC.Meta)
-
-					if err != nil {
-						//not much we can do without ping obj
-						msg.ERROR = fmt.Sprintf("%s", err)
-						log.Warning("%s", msg.ERROR)
+					//required settings
+					if el, ok := msg.HC.Meta["host"]; !ok {
+						//no host fail
+						msg.ERROR = "PING: Invalid host value"
+						log.Warning(msg.ERROR)
+						break
 					} else {
-						//fireaway
-						go hcping.DoTest(reschan)
+						v := el.(string)
+						hcping.Host = v
+					}
 
-						testing := true
+					//get optional settings
+					if el, ok := msg.HC.Meta["timeout"]; ok == true {
+						v := el.(int)
+						if v < 2 || v > 10 {
+							v = 2
+						}
+						hcping.Timeoutsec = v
+					}
 
-						for testing {
-							select {
-							case res := <-reschan:
-								log.Debug("PING RES: %+v", res)
-								//copy what we got
-								for k, v := range res {
-									hcping.Res[string(k)] = v
+					//parse value
+					if el, ok := msg.HC.Meta["ok"]; ok == true {
+						//parse interface
+						if el, ok := el.(map[string]interface{}); ok == true {
+							//parse string out of map
+							if el, ok := el["ploss"]; ok == true {
+								//parce out a float
+								//type ensure
+								if el, ok := el.(string); ok == true {
+									//convert string to float
+									if v, err := strconv.ParseFloat(el, 32); err == nil {
+										v := float32(v)
+										if v < 0 || v > 100 {
+											v = 2.5
+										}
+										hcping.Plossok = v
+									}
 								}
-								testing = false
-							case <-time.After(time.Duration(hcping.Timeout) * time.Second):
-								msg := fmt.Sprintf("PING: %s timeout %d sec", hcping.Host, hcping.Timeout)
-								log.Warning(msg)
-								hcping.Res["msg"] = msg
-								testing = false
 							}
 						}
 					}
 
-					totalTestTime := makeTimestamp() - testStart
-					hcping.Res["total_ms"] = totalTestTime
-					GStats.Details["ping_total_ms"].Update(float64(totalTestTime))
-					log.Debug("PING RESULT %+v", hcping.Res)
-					log.Debug("PING Exit %s", hcping.Host)
+					if el, ok := msg.HC.Meta["packets"]; ok == true {
+						if v, err := strconv.Atoi(el.(string)); err == nil {
+
+							if v < 1 || v > 10 {
+								v = 4
+							}
+							hcping.Packets = v
+						}
+					}
+
+					if el, ok := msg.HC.Meta["size"]; ok == true {
+						if v, err := strconv.Atoi(el.(string)); err == nil {
+							if v < 2 || v > 92 {
+								v = 35
+							}
+							hcping.Size = v
+						}
+					}
+
+					log.Debug("%s %+v", hctype, hcping)
+					err := hcping.DoTest()
+					if err != nil {
+						msg.ERROR = fmt.Sprintf("error %s", err)
+						log.Warning("%s", msg.ERROR)
+					}
+
 					msg.RESULT = hcping.Res
 
 				case "HTTP_GET":
@@ -716,7 +851,7 @@ func logHandle(w http.ResponseWriter, r *http.Request) {
 
 	loglevel = strings.ToUpper(loglevel)
 
-	Gloglevel, err := logging.LogLevel(loglevel)
+	Gloglevel, err = logging.LogLevel(loglevel)
 	if err != nil {
 		Gloglevel = logging.DEBUG
 		loglevel = "DEBUG"
@@ -771,4 +906,44 @@ func dump(t interface{}) string {
 
 func makeTimestamp() int64 {
 	return time.Now().UnixNano() / int64(time.Millisecond)
+}
+
+func lookupDns(host string, lookup chan interface{}) {
+
+	netProto := "ip4:icmp"
+
+	if strings.Index(host, ":") != -1 {
+		netProto = "ip6:ipv6-icmp"
+	}
+
+	IP, err := net.ResolveIPAddr(netProto, host)
+	if err != nil {
+		lookup <- err
+	}
+
+	lookup <- IP
+
+}
+
+func ResolveIPWithTimeout(host string, timeout_ms int) (*net.IPAddr, error) {
+
+	resolved := make(chan interface{})
+	go lookupDns(host, resolved)
+	//sit and wait
+	for {
+		select {
+		case msg := <-resolved:
+			switch msg.(type) {
+			case *net.IPAddr: //good enough
+				return msg.(*net.IPAddr), nil
+			case error: //error
+				return &net.IPAddr{}, msg.(error)
+			default: //unkn0own type
+				return &net.IPAddr{}, errors.New("wrong message from resolver")
+			}
+		case <-time.After(time.Duration(timeout_ms) * time.Millisecond):
+			return &net.IPAddr{}, errors.New(fmt.Sprint("dns timeout %d ms, resolving %s", timeout_ms, host))
+		}
+	}
+
 }

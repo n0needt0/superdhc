@@ -1,0 +1,213 @@
+package dhc4
+
+import (
+	"GoStats/stats"
+	"errors"
+	"fmt"
+	logging "github.com/op/go-logging"
+	"github.com/tatsushid/go-fastping"
+	"net"
+	"strconv"
+	"strings"
+	"time"
+)
+
+var log = logging.MustGetLogger("logfile")
+
+const (
+	HEALTH_STATE_UP   = 1
+	HEALTH_STATE_DOWN = 0
+)
+
+//ping stuff
+type response struct {
+	addr *net.IPAddr
+	rtt  time.Duration
+}
+
+type HcPing struct {
+	Host       string
+	Timeoutsec int     //sec timeout
+	Plossok    float32 //percent loss
+	Packets    int     //we use 4 iterations to test by default up to 10 otherwise
+	Size       int     //packet byte size 10 to 100
+	Res        map[string]interface{}
+}
+
+func NewPing() *HcPing {
+	return &HcPing{
+		"",
+		2,
+		0,
+		4,
+		34,
+		make(map[string]interface{}),
+	}
+}
+
+func (hcping *HcPing) LoadMeta(meta map[string]interface{}) error {
+	//required settings
+	if el, ok := meta["host"]; !ok {
+		//no host fail
+		return errors.New("PING: Invalid host value")
+	} else {
+		v := el.(string)
+		hcping.Host = v
+	}
+
+	//get optional settings
+	if el, ok := meta["timeout"]; ok == true {
+		v := el.(int)
+		if v < 2 || v > 10 {
+			v = 2
+		}
+		hcping.Timeoutsec = v
+	}
+
+	//parse value
+	if el, ok := meta["ok"]; ok == true {
+		//parse interface
+		if el, ok := el.(map[string]interface{}); ok == true {
+			//parse string out of map
+			if el, ok := el["ploss"]; ok == true {
+				//parce out a float
+				//type ensure
+				if el, ok := el.(string); ok == true {
+					//convert string to float
+					if v, err := strconv.ParseFloat(el, 32); err == nil {
+						v := float32(v)
+						if v < 0 || v > 100 {
+							v = 2.5
+						}
+						hcping.Plossok = v
+					}
+				}
+			}
+		}
+	}
+
+	if el, ok := meta["packets"]; ok == true {
+		if v, err := strconv.Atoi(el.(string)); err == nil {
+
+			if v < 1 || v > 10 {
+				v = 4
+			}
+			hcping.Packets = v
+		}
+	}
+
+	if el, ok := meta["size"]; ok == true {
+		if v, err := strconv.Atoi(el.(string)); err == nil {
+			if v < 2 || v > 92 {
+				v = 35
+			}
+			hcping.Size = v
+		}
+	}
+	return nil
+}
+
+func (hcping *HcPing) DoTest() error {
+
+	//this is basic ping spec same as before
+
+	hcping.Res["state"] = HEALTH_STATE_DOWN //it is not working unless noted otherwise
+	packetsDelivered := 0
+	hcping.Res["loss_%"] = float64(100)
+
+	//this guy will held our stats for us
+	var rt_stats stats.Stats
+
+	p := fastping.NewPinger()
+
+	//time to resolv  e DNS
+	dns_start := makeTimestamp()
+
+	netProto := "ip4:icmp"
+
+	if strings.Index(hcping.Host, ":") != -1 {
+		netProto = "ip6:ipv6-icmp"
+	}
+
+	ra, err := net.ResolveIPAddr(netProto, hcping.Host)
+	if err != nil {
+		return err
+	}
+
+	hcping.Res["dns_ms"] = makeTimestamp() - dns_start
+
+	results := make(map[string]*response)
+	results[ra.String()] = nil
+
+	p.AddIPAddr(ra)
+
+	onRecv, onIdle := make(chan *response), make(chan bool)
+	p.OnRecv = func(addr *net.IPAddr, t time.Duration) {
+		onRecv <- &response{addr: addr, rtt: t}
+	}
+	p.OnIdle = func() {
+		onIdle <- true
+	}
+
+	p.MaxRTT = time.Second
+	i := 0
+	p.RunLoop()
+
+loop:
+
+	for i < hcping.Packets {
+		select {
+
+		case res := <-onRecv:
+			if _, ok := results[res.addr.String()]; ok {
+				results[res.addr.String()] = res
+			}
+		case <-onIdle:
+			for host, r := range results {
+				if r == nil {
+					rt_stats.Update(0)
+					log.Warning("PING %s : unreachable %v", host, time.Now())
+
+				} else {
+					rt_ms := int(r.rtt.Nanoseconds() / int64(time.Millisecond))
+					rt_stats.Update(float64(rt_ms))
+					packetsDelivered++
+					log.Debug("PING %d: %s : %v %v", i, host, r.rtt.Nanoseconds()/int64(time.Millisecond), time.Now())
+				}
+				results[host] = nil
+				i++
+			}
+		case <-p.Done():
+			if err = p.Err(); err != nil {
+				msg := fmt.Sprintf("PING failed: %s", err)
+				log.Warning(msg)
+				hcping.Res["msg"] = msg
+			}
+			break loop
+		}
+	}
+	p.Stop()
+
+	hcping.Res["sent"] = hcping.Packets
+	hcping.Res["sent_ok"] = packetsDelivered
+
+	loss := float32(100 * (hcping.Packets - packetsDelivered) / hcping.Packets)
+	hcping.Res["loss_%"] = loss
+	if loss < hcping.Plossok {
+		hcping.Res["state"] = HEALTH_STATE_UP
+	} else {
+		hcping.Res["msg"] = fmt.Sprintf("%f%% packet loss", loss)
+	}
+
+	hcping.Res["rt_min"] = rt_stats.Min()
+	hcping.Res["rt_max"] = rt_stats.Max()
+	hcping.Res["rt_avg"] = rt_stats.Mean()
+	hcping.Res["rt_std"] = rt_stats.SampleStandardDeviation()
+
+	return nil
+
+}
+
+func makeTimestamp() int64 {
+	return time.Now().UnixNano() / int64(time.Millisecond)
+}
