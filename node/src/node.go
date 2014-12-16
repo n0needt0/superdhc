@@ -1,7 +1,8 @@
 package main
 
 import (
-	dhc4ping "./dhc4/ping"
+	//dhc4dns "./dhc4/dns"
+	dhc4 "./dhc4"
 	"GoStats/stats"
 	"bytes"
 	"container/list"
@@ -47,7 +48,7 @@ var logFile *os.File
 var logFormat = logging.MustStringFormatter("%{color}%{time:15:04:05.000000} %{shortfunc} ▶ %{level:.4s} %{id:03x}%{color:reset} %{message}")
 var log = logging.MustGetLogger("logfile")
 var Gloglevel logging.Level = logging.DEBUG
-var GTestStats []string = []string{"ping_total_ms"}
+var GTestStats []string = []string{"ping_total_ms", "tcp_total_ms", "dns_total_ms", "http_get_total_ms", "http_head_total_ms", "http_post_total_ms"}
 
 //the followign are flags passed from commandline
 var Configfile *string = flag.String("config", "/etc/dhc4/node.cfg", "Config file location default: /etc/fortihealth/node.cfg")
@@ -583,10 +584,96 @@ func worker() {
 
 				switch hctype {
 				case "DNS":
-				//	log.Info("%s test params %v", hctype, msg.HC.Meta)
+					testStart := makeTimestamp()
+
+					//chanel on which results if any will come from the ping
+					reschan := make(chan map[string]interface{})
+
+					log.Debug("%s spec %v", hctype, msg.HC.Meta)
+
+					//return ping struct with proposed config, will fill in default values
+					hcdns, err := dhc4.NewDns(msg.HC.Meta)
+
+					if err != nil {
+						//not much we can do without ping obj
+						msg.ERROR = fmt.Sprintf("%s", err)
+						log.Warning("%s", msg.ERROR)
+					} else {
+						//fireaway
+						go hcdns.DoTest(reschan)
+
+						testing := true
+
+						for testing {
+							select {
+							case res := <-reschan:
+								log.Debug("DNS RES: %+v", res)
+								//copy what we got
+								for k, v := range res {
+									hcdns.Res[string(k)] = v
+								}
+								testing = false
+							case <-time.After(time.Duration(hcdns.Timeout) * time.Second):
+								msg := fmt.Sprintf("DNS: %s:%s timeout %d sec", hcdns.Host, hcdns.RecType, hcdns.Timeout)
+								log.Warning(msg)
+								hcdns.Res["msg"] = msg
+								testing = false
+							}
+						}
+					}
+
+					totalTestTime := makeTimestamp() - testStart
+					hcdns.Res["total_ms"] = totalTestTime
+					GStats.Details["dns_total_ms"].Update(float64(totalTestTime))
+					log.Debug("DNS RESULT %+v", hcdns.Res)
+					log.Debug("DNS Exit %s", hcdns.Host)
+					msg.RESULT = hcdns.Res
 
 				case "TCP":
-				//	log.Info("%s test params %v", hctype, msg.HC.Meta)
+					testStart := makeTimestamp()
+
+					//chanel on which results if any will come from the ping
+					reschan := make(chan map[string]interface{})
+
+					log.Debug("%s spec %v", hctype, msg.HC.Meta)
+
+					//return ping struct with proposed config, will fill in default values
+					hctcp, err := dhc4.NewTcp(msg.HC.Meta)
+
+					if err != nil {
+						//not much we can do without ping obj
+						msg.ERROR = fmt.Sprintf("%s", err)
+						log.Warning("%s", msg.ERROR)
+					} else {
+						//fireaway
+						go hctcp.DoTest(reschan)
+
+						testing := true
+
+						for testing {
+							select {
+							case res := <-reschan:
+								log.Debug("TCP RES: %+v", res)
+								//copy what we got
+								for k, v := range res {
+									hctcp.Res[string(k)] = v
+								}
+								testing = false
+							case <-time.After(time.Duration(hctcp.Timeout) * time.Second):
+								msg := fmt.Sprintf("TCP: %s %s:%s timeout %d sec", hctcp.Proto, hctcp.Host, hctcp.Port, hctcp.Timeout)
+								log.Warning(msg)
+								hctcp.Res["msg"] = msg
+								testing = false
+							}
+						}
+					}
+
+					totalTestTime := makeTimestamp() - testStart
+					hctcp.Res["total_ms"] = totalTestTime
+					GStats.Details["tcp_total_ms"].Update(float64(totalTestTime))
+					log.Debug("TCP RESULT %+v", hctcp.Res)
+					log.Debug("TCP Exit %s", hctcp.Host)
+					msg.RESULT = hctcp.Res
 
 				case "PING":
 					testStart := makeTimestamp()
@@ -597,7 +684,7 @@ func worker() {
 					log.Debug("%s spec %v", hctype, msg.HC.Meta)
 
 					//return ping struct with proposed config, will fill in default values
-					hcping, err := dhc4ping.NewPing(msg.HC.Meta)
+					hcping, err := dhc4.NewPing(msg.HC.Meta)
 
 					if err != nil {
 						//not much we can do without ping obj

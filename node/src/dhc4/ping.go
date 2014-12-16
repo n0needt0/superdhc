@@ -1,26 +1,18 @@
+/**
+*	PING DHC4 Module by AY
+**/
+
 package dhc4
 
 import (
 	"GoStats/stats"
-	dhc4dns "dhc4/dns"
 	"errors"
 	"fmt"
-	logging "github.com/op/go-logging"
 	"github.com/tatsushid/go-fastping"
 	"net"
 	"strconv"
+	"strings"
 	"time"
-)
-
-var log = logging.MustGetLogger("logfile")
-
-const (
-	HEALTH_STATE_UP        = 1
-	HEALTH_STATE_DOWN      = 0
-	TIMEOUT_OVERALL_MSEC   = 2000
-	TIMEOUT_DNS_MSEC       = 20
-	TIMEOUT_TEST_MSEC      = 2000
-	TIMEOUT_AFTERTEST_MSEC = 2000
 )
 
 //ping stuff
@@ -29,38 +21,36 @@ type response struct {
 	rtt  time.Duration
 }
 
-type TimeoutMsec struct {
-	Overall   int
-	Dns       int
-	Test      int
-	AfterTest int
-}
-
 type HcPing struct {
-	Host        string
-	TimeoutMsec TimeoutMsec //Various timeouts
-	Plossok     float32     //percent loss
-	Packets     int         //we use 4 iterations to test by default up to 10 otherwise
-	Size        int         //packet byte size 10 to 100
-	Res         map[string]interface{}
+	Host    string
+	Timeout int     //timeout sec
+	Plossok float32 //percent loss
+	Packets int     //we use 4 iterations to test by default up to 10 otherwise
+	Size    int     //packet byte size 10 to 100
+	Res     map[string]interface{}
 }
 
-func NewPing() *HcPing {
-	return &HcPing{
+func NewPing(meta map[string]interface{}) (*HcPing, error) {
+	hcping := &HcPing{
 		"",
-		TimeoutMsec{
-			TIMEOUT_OVERALL_MSEC,
-			TIMEOUT_DNS_MSEC,
-			TIMEOUT_TEST_MSEC,
-			TIMEOUT_AFTERTEST_MSEC},
-		0,
-		4,
-		34,
+		TIMEOUT_SEC,
+		OK_PACKET_LOSS_P,
+		PACKET_CNT,
+		PACKET_SIZE,
 		make(map[string]interface{}),
 	}
+
+	hcping.Res["state"] = HEALTH_STATE_DOWN //it is not working unless noted otherwise
+	hcping.Res["loss_%"] = float64(100)
+
+	err := hcping.loadMeta(meta)
+	if err != nil {
+		return hcping, err
+	}
+	return hcping, nil
 }
 
-func (hcping *HcPing) LoadMeta(meta map[string]interface{}) error {
+func (hcping *HcPing) loadMeta(meta map[string]interface{}) error {
 	//required settings
 	if el, ok := meta["host"]; !ok {
 		//no host fail
@@ -76,7 +66,7 @@ func (hcping *HcPing) LoadMeta(meta map[string]interface{}) error {
 		if v < 2 || v > 10 {
 			v = 2
 		}
-		hcping.TimeoutMsec.Overall = v * 1000
+		hcping.Timeout = v
 	}
 	//parse value
 	if el, ok := meta["ok"]; ok == true {
@@ -121,27 +111,32 @@ func (hcping *HcPing) LoadMeta(meta map[string]interface{}) error {
 	return nil
 }
 
-func (hcping *HcPing) DoTest() error {
+func (hcping *HcPing) DoTest(result chan map[string]interface{}) error {
 
-	//this is basic ping spec same as before
+	res := make(map[string]interface{})
 
-	hcping.Res["state"] = HEALTH_STATE_DOWN //it is not working unless noted otherwise
 	packetsDelivered := 0
-	hcping.Res["loss_%"] = float64(100)
 
 	//this guy will held our stats for us
 	var rt_stats stats.Stats
 	dns_start := makeTimestamp()
 
-	log.Warning("%+v", hcping)
-
-	dns := dhc4dns.NewDnsResolver()
-	IpAddr, err := dns.ResolveIPWithTimeout(hcping.Host, hcping.TimeoutMsec.Dns)
-	if err != nil {
-		return errors.New(fmt.Sprintf("PING:DNS: %s", err))
+	netProto := "ip4:icmp"
+	if strings.Index(hcping.Host, ":") != -1 {
+		netProto = "ip6:ipv6-icmp"
 	}
 
-	hcping.Res["dns_ms"] = makeTimestamp() - dns_start
+	res["step"] = "dns"
+
+	IpAddr, err := net.ResolveIPAddr(netProto, hcping.Host)
+	if err != nil {
+		res["msg"] = fmt.Sprintf("PING:DNS: %s", err)
+		result <- res
+		return nil
+	}
+
+	res["dns_ms"] = makeTimestamp() - dns_start
+	res["step"] = "test"
 
 	p := fastping.NewPinger()
 
@@ -190,38 +185,29 @@ loop:
 			if err := p.Err(); err != nil {
 				msg := fmt.Sprintf("PING failed: %s", err)
 				log.Warning(msg)
-				hcping.Res["msg"] = msg
+				res["msg"] = msg
 			}
-			break loop
-		case <-time.After(time.Duration(hcping.TimeoutMsec.Test) * time.Millisecond):
-			msg := fmt.Sprintf("PING: %s timeout %d ms", hcping.Host, hcping.TimeoutMsec.Test)
-			log.Warning(msg)
-			hcping.Res["msg"] = msg
 			break loop
 		}
 	}
 	p.Stop()
 
-	hcping.Res["sent"] = hcping.Packets
-	hcping.Res["sent_ok"] = packetsDelivered
+	res["sent"] = hcping.Packets
+	res["sent_ok"] = packetsDelivered
 
 	loss := float32(100 * (hcping.Packets - packetsDelivered) / hcping.Packets)
-	hcping.Res["loss_%"] = loss
+	res["loss_%"] = loss
 	if loss < hcping.Plossok {
-		hcping.Res["state"] = HEALTH_STATE_UP
+		res["state"] = HEALTH_STATE_UP
 	} else {
-		hcping.Res["msg"] = fmt.Sprintf("%f%% packet loss", loss)
+		res["msg"] = fmt.Sprintf("%f%% packet loss", loss)
 	}
 
-	hcping.Res["rt_min"] = rt_stats.Min()
-	hcping.Res["rt_max"] = rt_stats.Max()
-	hcping.Res["rt_avg"] = rt_stats.Mean()
-	hcping.Res["rt_std"] = rt_stats.SampleStandardDeviation()
+	res["rt_min"] = rt_stats.Min()
+	res["rt_max"] = rt_stats.Max()
+	res["rt_avg"] = rt_stats.Mean()
+	res["rt_std"] = rt_stats.SampleStandardDeviation()
+	result <- res
 
 	return nil
-
-}
-
-func makeTimestamp() int64 {
-	return time.Now().UnixNano() / int64(time.Millisecond)
 }
