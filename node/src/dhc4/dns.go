@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/miekg/dns"
 	"net"
+	"strconv"
 )
 
 var valid_records = []string{"DNS_A", "DNS_CNAME", "DNS_HINFO", "DNS_MX", "DNS_NS", "DNS_PTR", "DNS_SOA", "DNS_TXT", "DNS_AAAA", "DNS_SRV", "DNS_NAPTR", "DNS_A6", "DNS_ALL", "DNS_ANY"}
@@ -40,28 +41,43 @@ func NewDns(meta map[string]interface{}) (*HcDns, error) {
 
 func (hcdns *HcDns) loadMeta(meta map[string]interface{}) error {
 	//required settings
-	if el, ok := meta["host"]; !ok {
-		//no host fail
-		return errors.New("DNS: Invalid host value")
+	if el, ok := meta["host"]; ok {
+		if _, ok := el.(string); ok {
+			v := el.(string)
+			hcdns.Host = v
+		} else {
+			return errors.New("DNS: Invalid host value")
+		}
 	} else {
-		v := el.(string)
-		hcdns.Host = v
+		return errors.New("DNS: Invalid host value")
 	}
 
-	//get optional settings
+	hcdns.Timeout = TIMEOUT_SEC
 	if el, ok := meta["timeout"]; ok == true {
-		v := el.(int)
-		if v < 2 || v > 10 {
-			v = 2
+		v := 0
+
+		if _, ok := el.(string); ok {
+			if v, err := strconv.Atoi(el.(string)); err == nil {
+				v = v
+			}
 		}
-		hcdns.Timeout = v
+
+		if _, ok := el.(int); ok {
+			v = el.(int)
+		}
+
+		if v > 2 || v < 10 {
+			hcdns.Timeout = v
+		}
 	}
 
 	if el, ok := meta["record_type"]; ok == true {
-		requested := el.(string)
-		for _, valid := range valid_records {
-			if valid == requested {
-				hcdns.RecType = requested
+		if _, ok := el.(string); ok {
+			requested := el.(string)
+			for _, valid := range valid_records {
+				if valid == requested {
+					hcdns.RecType = requested
+				}
 			}
 		}
 	}

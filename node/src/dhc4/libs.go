@@ -7,9 +7,10 @@ import (
 )
 
 const (
+	USER_AGENT        = "FortiDirector/4 HealthCheck/4.0 (https://www.fortidirector.com/)"
 	HEALTH_STATE_UP   = 1
 	HEALTH_STATE_DOWN = 0
-	TIMEOUT_SEC       = 6
+	TIMEOUT_SEC       = 30
 	OK_PACKET_LOSS_P  = 0
 	PACKET_CNT        = 4
 	PACKET_SIZE       = 34

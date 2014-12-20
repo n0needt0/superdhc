@@ -589,7 +589,7 @@ func worker() {
 					//chanel on which results if any will come from the ping
 					reschan := make(chan map[string]interface{})
 
-					log.Debug("%s spec %v", hctype, msg.HC.Meta)
+					log.Debug("\n%s spec %v\n", hctype, msg.HC.Meta)
 
 					//return ping struct with proposed config, will fill in default values
 					hcdns, err := dhc4.NewDns(msg.HC.Meta)
@@ -721,14 +721,62 @@ func worker() {
 					log.Debug("PING Exit %s", hcping.Host)
 					msg.RESULT = hcping.Res
 
-				case "HTTP_GET":
-				//	log.Info("%s test params %v", hctype, msg.HC.Meta)
+				case "HTTP_GET", "HTTP_POST", "HTTP_HEAD":
+					//	log.Info("%s test params %v", hctype, msg.HC.Meta)
+					testStart := makeTimestamp()
 
-				case "HTTP_POST":
-				//	log.Info("%s test params %v", hctype, msg.HC.Meta)
+					//chanel on which results if any will come from the ping
+					reschan := make(chan map[string]interface{})
 
-				case "HTTP_HEAD":
-				//	log.Info("%s test params %v", hctype, msg.HC.Meta)
+					log.Debug("%s spec %v\n", hctype, msg.HC.Meta)
+
+					//return ping struct with proposed config, will fill in default values
+					hchttp, err := dhc4.NewHttp(msg.HC.Meta)
+					if err != nil {
+						//not much we can do without ping obj
+						msg.ERROR = fmt.Sprintf("%s", err)
+						log.Warning("%s", msg.ERROR)
+					} else {
+						//fireaway sett proper request
+						switch hctype {
+						case "HTTP_GET":
+							hchttp.Request = "get"
+						case "HTTP_POST":
+							hchttp.Request = "post"
+						case "HTTP_HEAD":
+							hchttp.Request = "head"
+						}
+
+						log.Warning("%+v", hchttp)
+
+						go hchttp.DoTest(reschan)
+
+						testing := true
+
+						for testing {
+							select {
+							case res := <-reschan:
+								log.Debug("\nHTTP RES: %+v", res)
+								//copy what we got
+								for k, v := range res {
+									hchttp.Res[string(k)] = v
+								}
+								testing = false
+							case <-time.After(time.Duration(hchttp.Timeout) * time.Second):
+								msg := fmt.Sprintf("HTTP: %s://%s/%s timeout %d sec", hchttp.Proto, hchttp.Host, strings.Trim(hchttp.Url, "/"), hchttp.Timeout)
+								log.Warning(msg)
+								hchttp.Res["msg"] = msg
+								testing = false
+							}
+						}
+					}
+
+					totalTestTime := makeTimestamp() - testStart
+					hchttp.Res["total_ms"] = totalTestTime
+					GStats.Details[fmt.Sprintf("http_%s_total_ms", hchttp.Request)].Update(float64(totalTestTime))
+					log.Debug("HTTP RESULT %+v", hchttp.Res)
+					log.Debug("HTTP Exit %s", hchttp.Host)
+					msg.RESULT = hchttp.Res
 
 				default:
 					log.Debug("%s test params %v", hctype, msg.HC.Meta)

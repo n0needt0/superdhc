@@ -52,22 +52,36 @@ func NewPing(meta map[string]interface{}) (*HcPing, error) {
 
 func (hcping *HcPing) loadMeta(meta map[string]interface{}) error {
 	//required settings
-	if el, ok := meta["host"]; !ok {
-		//no host fail
-		return errors.New("PING: Invalid host value")
+	if el, ok := meta["host"]; ok {
+		if _, ok := el.(string); ok {
+			v := el.(string)
+			hcping.Host = v
+		} else {
+			return errors.New("PING: Invalid host value")
+		}
 	} else {
-		v := el.(string)
-		hcping.Host = v
+		return errors.New("PING: Invalid host value")
 	}
 
-	//get optional settings
+	hcping.Timeout = TIMEOUT_SEC
 	if el, ok := meta["timeout"]; ok == true {
-		v := el.(int)
-		if v < 2 || v > 10 {
-			v = 2
+		v := 0
+
+		if _, ok := el.(string); ok {
+			if v, err := strconv.Atoi(el.(string)); err == nil {
+				v = v
+			}
 		}
-		hcping.Timeout = v
+
+		if _, ok := el.(int); ok {
+			v = el.(int)
+		}
+
+		if v > 2 || v < 10 {
+			hcping.Timeout = v
+		}
 	}
+
 	//parse value
 	if el, ok := meta["ok"]; ok == true {
 		//parse interface
@@ -76,28 +90,40 @@ func (hcping *HcPing) loadMeta(meta map[string]interface{}) error {
 			if el, ok := el["ploss"]; ok == true {
 				//parce out a float
 				//type ensure
-				if el, ok := el.(string); ok == true {
-					//convert string to float
-					if v, err := strconv.ParseFloat(el, 32); err == nil {
-						v := float32(v)
-						if v < 0 || v > 100 {
-							v = 2.5
+				if _, ok := el.(string); ok {
+					if el, ok := el.(string); ok == true {
+						//convert string to float
+						if v, err := strconv.ParseFloat(el, 32); err == nil {
+							v := float32(v)
+							if v < 0 || v > 100 {
+								v = 2.5
+							}
+							hcping.Plossok = v
 						}
-						hcping.Plossok = v
 					}
 				}
 			}
 		}
 	}
 
+	hcping.Packets = 4
 	if el, ok := meta["packets"]; ok == true {
-		if v, err := strconv.Atoi(el.(string)); err == nil {
+		v := 0
 
-			if v < 1 || v > 10 {
-				v = 4
+		if _, ok := el.(string); ok {
+			if v, err := strconv.Atoi(el.(string)); err == nil {
+				v = v
 			}
+		}
+
+		if _, ok := el.(int); ok {
+			v = el.(int)
+		}
+
+		if v > 1 || v < 10 {
 			hcping.Packets = v
 		}
+
 	}
 
 	if el, ok := meta["size"]; ok == true {
@@ -108,6 +134,27 @@ func (hcping *HcPing) loadMeta(meta map[string]interface{}) error {
 			hcping.Size = v
 		}
 	}
+
+	hcping.Size = 35
+	if el, ok := meta["size"]; ok == true {
+		v := 0
+
+		if _, ok := el.(string); ok {
+			if v, err := strconv.Atoi(el.(string)); err == nil {
+				v = v
+			}
+		}
+
+		if _, ok := el.(int); ok {
+			v = el.(int)
+		}
+
+		if v > 2 || v < 92 {
+			hcping.Size = v
+		}
+
+	}
+
 	return nil
 }
 

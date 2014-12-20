@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 )
 
@@ -39,34 +40,56 @@ func NewTcp(meta map[string]interface{}) (*HcTcp, error) {
 
 func (hctcp *HcTcp) loadMeta(meta map[string]interface{}) error {
 	//required settings
-	if el, ok := meta["host"]; !ok {
-		//no host fail
-		return errors.New("TCP: Invalid host value")
+	//required settings
+	if el, ok := meta["host"]; ok {
+		if _, ok := el.(string); ok {
+			v := el.(string)
+			hctcp.Host = v
+		} else {
+			return errors.New("TCP: Invalid host value")
+		}
 	} else {
-		v := el.(string)
-		hctcp.Host = v
+		return errors.New("TCP: Invalid host value")
 	}
 
 	if el, ok := meta["port"]; !ok {
 		//no host fail
 		return errors.New("TCP: Invalid port value")
 	} else {
-		v := el.(string)
+		v := ""
+		if _, ok := el.(string); ok {
+			v = el.(string)
+		}
+		if _, ok := el.(int); ok {
+			v = fmt.Sprintf("%d", el.(int))
+		}
 		hctcp.Port = v
 	}
 
-	//get optional settings
+	hctcp.Timeout = TIMEOUT_SEC
 	if el, ok := meta["timeout"]; ok == true {
-		v := el.(int)
-		if v < 2 || v > 10 {
-			v = 2
+		v := 0
+
+		if _, ok := el.(string); ok {
+			if v, err := strconv.Atoi(el.(string)); err == nil {
+				v = v
+			}
 		}
-		hctcp.Timeout = v
+
+		if _, ok := el.(int); ok {
+			v = el.(int)
+		}
+
+		if v > 2 || v < 10 {
+			hctcp.Timeout = v
+		}
 	}
 
 	if el, ok := meta["proto"]; ok == true {
-		v := el.(string)
-		hctcp.Proto = v
+		if _, ok := el.(string); ok {
+			v := el.(string)
+			hctcp.Proto = v
+		}
 	} else {
 		if strings.Index(hctcp.Host, ":") != -1 {
 			hctcp.Proto = "tcp6"
