@@ -31,6 +31,7 @@ import (
 func main() {
 	t := map[string]interface{}{}
 	t["get_by_code_ok"] = map[string]interface{}{"request": "get", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/get", "ok": map[string]interface{}{"rcode": []int{200, 206}}}
+
 	t["get_by_code_fail"] = map[string]interface{}{"request": "get", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/get", "ok": map[string]interface{}{"rcode": []int{2001}}}
 	t["get_by_string_ok"] = map[string]interface{}{"request": "get", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/get?musikpusi", "ok": map[string]interface{}{"rcode": []int{200, 206}, "string": "musikpusi"}}
 	t["get_by_string_fail"] = map[string]interface{}{"request": "get", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/get", "ok": map[string]interface{}{"rcode": []int{200, 206}, "string": "musikpusi!"}}

@@ -108,7 +108,7 @@ func (hcping *HcPing) loadMeta(meta map[string]interface{}) error {
 
 	hcping.Packets = 4
 	if el, ok := meta["packets"]; ok == true {
-		v := 0
+		v := 4
 
 		if _, ok := el.(string); ok {
 			if v, err := strconv.Atoi(el.(string)); err == nil {
@@ -120,7 +120,7 @@ func (hcping *HcPing) loadMeta(meta map[string]interface{}) error {
 			v = el.(int)
 		}
 
-		if v > 1 || v < 10 {
+		if v < 1 || v > 10 {
 			hcping.Packets = v
 		}
 

@@ -31,11 +31,11 @@ cp /vagrant/etc/mongod_node.conf /etc/mongod.conf
 
 echo "installing golang"
 
-wget https://storage.googleapis.com/golang/go1.3.3.linux-amd64.tar.gz
+wget https://storage.googleapis.com/golang/go1.4.linux-amd64.tar.gz
 
-tar -C /usr/local -xzf go1.3.3.linux-amd64.tar.gz
+tar -C /usr/local -xzf go1.4.linux-amd64.tar.gz
 
-rm go1.3.3.linux-amd64.tar.gz
+rm go1.4.linux-amd64.tar.gz
 
 echo 'export PATH=/vagrant/bin:/usr/local/go/bin:$PATH' >> /home/vagrant/.profile
 echo 'export GOPATH=/vagrant' >> /home/vagrant/.profile

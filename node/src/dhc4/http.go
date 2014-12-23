@@ -7,10 +7,10 @@ package dhc4
 import (
 	"errors"
 	"fmt"
-	"github.com/andelf/go-curl"
-	"net/url"
+	"github.com/parnurzeal/gorequest"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var valid_request map[string]int = map[string]int{"get": 1, "post": 1, "head": 1}
@@ -207,143 +207,92 @@ func (hchttp *HcHttp) DoTest(result chan map[string]interface{}) error {
 
 	hchttp.Res["state"] = HEALTH_STATE_DOWN //it is not working unless noted otherwise
 
-	curlobj := curl.EasyInit()
-	defer curlobj.Cleanup()
-
-	if curlobj == nil {
-		msg := fmt.Sprintf("HTTP failed to initialize curl")
-		log.Error(msg)
-		res["msg"] = msg
-		result <- res
-		return nil
-	}
+	//set up
+	request := gorequest.New().Timeout(time.Duration(hchttp.Timeout)*time.Second).Set("User-Agent", USER_AGENT)
 
 	uri := fmt.Sprintf("%s://%s/%s", hchttp.Proto, hchttp.Host, strings.TrimLeft(hchttp.Url, "/"))
-	fulluri := fmt.Sprintf("%s://%s:%d/%s", hchttp.Proto, hchttp.Host, hchttp.Port, strings.TrimLeft(hchttp.Url, "/"))
 
-	curlobj.Setopt(curl.OPT_URL, uri)
-	curlobj.Setopt(curl.OPT_FAILONERROR, true)
-	curlobj.Setopt(curl.OPT_VERBOSE, false)
-	curlobj.Setopt(curl.OPT_HEADER, true)
-	curlobj.Setopt(curl.OPT_HTTPHEADER, []string{"Expect:"})
+	if (hchttp.Port != 80 && hchttp.Proto == "http") || (hchttp.Port != 443 && hchttp.Proto == "https") {
+		uri = fmt.Sprintf("%s://%s:%d/%s", hchttp.Proto, hchttp.Host, hchttp.Port, strings.TrimLeft(hchttp.Url, "/"))
+	}
 
-	//read headers callback
-	okstringheader := false
-	curlobj.Setopt(curl.OPT_HEADERFUNCTION,
-		func(buf []byte, userdata interface{}) bool {
-			if hchttp.OkHeader != "" && strings.Contains(string(buf), hchttp.OkHeader) {
-				okstringheader = true
-			}
-			return true
-		})
+	for _, v := range hchttp.Headers {
 
-	//read body callback
-	okstringinbody := false
-	curlobj.Setopt(curl.OPT_WRITEFUNCTION,
-		func(buf []byte, userdata interface{}) bool {
-			if hchttp.OkString != "" && strings.Contains(string(buf), hchttp.OkString) {
-				okstringinbody = true
-			}
-			return true
-		})
-
-	if hchttp.Request == "head" { //set header request
-		curlobj.Setopt(curl.OPT_NOBODY, true)
-	} else {
-		if hchttp.Request == "post" {
-			post_data := url.QueryEscape("test=test")
-			curlobj.Setopt(curl.OPT_POST, true)
-			curlobj.Setopt(curl.OPT_POSTFIELDSIZE, len(post_data))
-
-			//doing post callback
-			sent := false
-			curlobj.Setopt(curl.OPT_READFUNCTION,
-				func(buf []byte, userdata interface{}) int {
-					// WARNING: never use append()
-					if !sent {
-						sent = true
-						ret := copy(buf, post_data)
-						return ret
-					}
-					return 0 // sent ok
-				})
-
+		header := strings.Split(v, ":")
+		if len(header) == 2 {
+			request.Set(header[0], header[1])
 		}
 	}
 
-	curlobj.Setopt(curl.OPT_TIMEOUT, hchttp.Timeout)
-	curlobj.Setopt(curl.OPT_CONNECTTIMEOUT, hchttp.Timeout)
-	curlobj.Setopt(curl.OPT_FRESH_CONNECT, true)
-
-	if hchttp.Port != 0 {
-		curlobj.Setopt(curl.OPT_PORT, hchttp.Port)
+	switch hchttp.Request {
+	case "get":
+		request.Get(uri)
+	case "post":
+		request.Post(uri).Query("test=test")
+	case "head":
+		request.Head(uri)
 	}
 
-	curlobj.Setopt(curl.OPT_USERAGENT, USER_AGENT)
+	start := makeTimestamp()
 
-	curlobj.Setopt(curl.OPT_FOLLOWLOCATION, true)
-
-	curlobj.Setopt(curl.OPT_SSL_VERIFYHOST, false)
-	curlobj.Setopt(curl.OPT_SSL_VERIFYPEER, false)
-
-	curlobj.Setopt(curl.OPT_RANGE, "0-262144")
-
-	curlobj.Setopt(curl.OPT_HTTP200ALIASES, hchttp.OkCode)
-	curlobj.Setopt(curl.OPT_HTTPHEADER, hchttp.Headers)
-
-	err := curlobj.Perform()
-	if err != nil {
-		msg := fmt.Sprintf("HTTP to %s result %s", fulluri, err)
+	response, body, errs := request.End()
+	if errs != nil {
+		msg := fmt.Sprintf("HTTP to %s result %+v", uri, errs)
 		res["msg"] = msg
 		result <- res
 		return nil
 	}
 
-	v, _ := curlobj.Getinfo(curl.INFO_HTTP_CODE)
-	if _, ok := v.(int); ok {
-		res["http_code"] = v.(int)
-	}
+	testtime := makeTimestamp() - start
 
-	if v, err := curlobj.Getinfo(curl.INFO_NAMELOOKUP_TIME); err == nil {
-		if _, ok := v.(float64); ok {
-			res["nsl_ms"] = v.(float64) * float64(1000) //convert to msed
-		}
-	}
-
-	if v, err := curlobj.Getinfo(curl.INFO_PRETRANSFER_TIME); err == nil {
-		if _, ok := v.(float64); ok {
-			res["con_ms"] = v.(float64) * float64(1000)
-		}
-
-	}
-	if v, err := curlobj.Getinfo(curl.INFO_STARTTRANSFER_TIME); err == nil {
-		if _, ok := v.(float64); ok {
-			res["tfb_ms"] = v.(float64) * float64(1000)
-		}
-	}
-	if v, err := curlobj.Getinfo(curl.INFO_TOTAL_TIME); err == nil {
-		if _, ok := v.(float64); ok {
-			res["tot_ms"] = v.(float64) * float64(1000)
-		}
-	}
+	res["http_code"] = response.StatusCode
+	res["nsl_ms"] = testtime / 1000 //convert to msed
+	res["con_ms"] = res["nsl_ms"]
+	res["tfb_ms"] = res["nsl_ms"]
+	res["tot_ms"] = res["nsl_ms"]
 
 	//lets check codes, remember codes replied in int, but submitted as strings
 	state := HEALTH_STATE_DOWN
-	str_http_code := fmt.Sprintf("%d", res["http_code"].(int))
+	str_http_code := fmt.Sprintf("%d", response.StatusCode)
 	for _, v := range hchttp.OkCode {
 		if str_http_code == v {
 			//we are good
 			state = HEALTH_STATE_UP
 		}
 	}
-
 	//if string is specified check more but not for Header only
+	okstringinbody := false
+	if hchttp.OkString != "" && strings.Contains(body, hchttp.OkString) {
+		okstringinbody = true
+	}
 	if state == HEALTH_STATE_UP && hchttp.OkString != "" && !okstringinbody {
 		res["msg"] = fmt.Sprintf("string \"%s\" not found", hchttp.OkString)
 		state = HEALTH_STATE_DOWN
 	}
 
 	//if header specified check header
+	//remember header in response comes as map[string]string
+	//yet can be specified as string
+
+	okstringheader := false
+	if hchttp.OkHeader != "" {
+
+		hdr := strings.Split(hchttp.OkHeader, ":")
+
+		for k, v := range response.Header {
+
+			//if passed as proper header
+			if len(hdr) == 2 && k == strings.TrimSpace(hdr[0]) && v[0] == strings.TrimSpace(hdr[1]) {
+				okstringheader = true
+			}
+
+			//if passed as some string
+			if len(hdr) == 1 && strings.Contains(fmt.Sprintf("%s : %s", k, v[0]), hchttp.OkHeader) {
+				okstringheader = true
+			}
+		}
+	}
+
 	if state == HEALTH_STATE_UP && hchttp.OkHeader != "" && !okstringheader {
 		res["msg"] = fmt.Sprintf("header \"%s\" not found", hchttp.OkHeader)
 		state = HEALTH_STATE_DOWN

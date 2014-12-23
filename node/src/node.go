@@ -624,7 +624,7 @@ func worker() {
 
 					totalTestTime := makeTimestamp() - testStart
 					hcdns.Res["total_ms"] = totalTestTime
-					GStats.Details["dns_total_ms"].Update(float64(totalTestTime))
+					//GStats.Details["dns_total_ms"].Update(float64(totalTestTime))
 					log.Debug("DNS RESULT %+v", hcdns.Res)
 					log.Debug("DNS Exit %s", hcdns.Host)
 					msg.RESULT = hcdns.Res
@@ -670,7 +670,7 @@ func worker() {
 
 					totalTestTime := makeTimestamp() - testStart
 					hctcp.Res["total_ms"] = totalTestTime
-					GStats.Details["tcp_total_ms"].Update(float64(totalTestTime))
+					//GStats.Details["tcp_total_ms"].Update(float64(totalTestTime))
 					log.Debug("TCP RESULT %+v", hctcp.Res)
 					log.Debug("TCP Exit %s", hctcp.Host)
 					msg.RESULT = hctcp.Res
@@ -716,13 +716,13 @@ func worker() {
 
 					totalTestTime := makeTimestamp() - testStart
 					hcping.Res["total_ms"] = totalTestTime
-					GStats.Details["ping_total_ms"].Update(float64(totalTestTime))
+					//GStats.Details["ping_total_ms"].Update(float64(totalTestTime))
 					log.Debug("PING RESULT %+v", hcping.Res)
 					log.Debug("PING Exit %s", hcping.Host)
 					msg.RESULT = hcping.Res
 
 				case "HTTP_GET", "HTTP_POST", "HTTP_HEAD":
-					//	log.Info("%s test params %v", hctype, msg.HC.Meta)
+					log.Info("%s test params %v", hctype, msg.HC.Meta)
 					testStart := makeTimestamp()
 
 					//chanel on which results if any will come from the ping
@@ -747,8 +747,6 @@ func worker() {
 							hchttp.Request = "head"
 						}
 
-						log.Warning("%+v", hchttp)
-
 						go hchttp.DoTest(reschan)
 
 						testing := true
@@ -762,7 +760,7 @@ func worker() {
 									hchttp.Res[string(k)] = v
 								}
 								testing = false
-							case <-time.After(time.Duration(hchttp.Timeout) * time.Second):
+							case <-time.After(time.Duration(hchttp.Timeout+1) * time.Second):
 								msg := fmt.Sprintf("HTTP: %s://%s/%s timeout %d sec", hchttp.Proto, hchttp.Host, strings.Trim(hchttp.Url, "/"), hchttp.Timeout)
 								log.Warning(msg)
 								hchttp.Res["msg"] = msg
@@ -773,7 +771,7 @@ func worker() {
 
 					totalTestTime := makeTimestamp() - testStart
 					hchttp.Res["total_ms"] = totalTestTime
-					GStats.Details[fmt.Sprintf("http_%s_total_ms", hchttp.Request)].Update(float64(totalTestTime))
+					//GStats.Details[fmt.Sprintf("http_%s_total_ms", hchttp.Request)].Update(float64(totalTestTime))
 					log.Debug("HTTP RESULT %+v", hchttp.Res)
 					log.Debug("HTTP Exit %s", hchttp.Host)
 					msg.RESULT = hchttp.Res
