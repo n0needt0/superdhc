@@ -36,13 +36,17 @@ import (
 //_EVENT healthcheck event
 
 const (
-	DB_HC          = "hc"
-	COL_HC         = "hc"
-	DB_HIST        = "hist"
-	COL_HIST       = "hist"
-	DB_EVENT       = "event"
-	COL_EVENT      = "event"
-	EXPIRESEC_HIST = 60
+	HEALTH_UP       = true
+	HEALTH_DOWN     = false
+	DB_HC           = "hc"
+	COL_HC          = "hc"
+	DB_HIST         = "hist"
+	COL_HIST        = "hist"
+	DB_EVENT        = "event"
+	COL_EVENT       = "event"
+	EXPIRESEC_HIST  = 86400 // maximum time for history to live on this node 24hr
+	EXPIRECNT_HIST  = 10    //maximum number of history records for given health check id
+	FORCESEC_REPORT = 86400 //report down event if still down and older than
 )
 
 //this is log file
@@ -113,13 +117,23 @@ type Hc struct {
 }
 
 type HcResult struct {
-	Result    bool `json:"r" bson:"r"`
+	ID        bson.ObjectId `bson:"_id,omitempty"`
+	Result    bool          `json:"r" bson:"r"`
 	Hcid      string
 	HcType    string
 	Sn        string
 	LastRunTs int32 `json:"lr" bson:"lr"`
 	Meta      map[string]interface{}
 	CreatedAt time.Time `json:"createdAt" bson:"createdAt"`
+}
+
+type HcEvent struct {
+	ID         bson.ObjectId `bson:"_id,omitempty"`
+	SERIAL     string
+	Result     bool
+	Hcid       string
+	AckSerial  string
+	ReportedAt time.Time `json:"reportedAt" bson:"reportedAt"`
 }
 
 type Msg struct {
@@ -228,6 +242,7 @@ func indexmongo(mongoSession *mgo.Session) {
 	}
 
 	//HISTORY DB
+	c = session.DB(DB_HIST).C(COL_HIST)
 	// search index
 	err = c.EnsureIndexKey("hcid")
 	if err != nil {
@@ -238,6 +253,27 @@ func indexmongo(mongoSession *mgo.Session) {
 	index = mgo.Index{
 		Key:         []string{"createdAt"},
 		ExpireAfter: time.Duration(EXPIRESEC_HIST) * time.Second,
+	}
+
+	err = c.DropIndex("createdAt")
+	if err != nil {
+		log.Warning("%s", err)
+	}
+
+	err = c.EnsureIndex(index)
+	if err != nil {
+		log.Fatalf("%s", err)
+	}
+
+	c = session.DB(DB_EVENT).C(COL_EVENT)
+
+	// Unique Index
+	index = mgo.Index{
+		Key:        []string{"hcid"},
+		Unique:     true,
+		DropDups:   true,
+		Background: true,
+		Sparse:     true,
 	}
 
 	err = c.EnsureIndex(index)
@@ -476,6 +512,7 @@ func client(me int, mongoSession *mgo.Session) {
 
 	hc_conn := session.DB(DB_HC).C(COL_HC)
 	hist_conn := session.DB(DB_HIST).C(COL_HIST)
+	event_conn := session.DB(DB_EVENT).C(COL_EVENT)
 
 	client, err := context.NewSocket(zmq.REQ)
 	if err != nil {
@@ -663,8 +700,19 @@ func client(me int, mongoSession *mgo.Session) {
 
 					log.Debug("unlocked %+v", unlock)
 
+					state := HEALTH_DOWN
+
+					if res, ok := ReplyMsg.RESULT["state"]; ok {
+						s := fmt.Sprintf("%s", res)
+						if s == "1" {
+							state = HEALTH_UP
+							log.Debug("intstate %s ", s)
+						}
+
+					}
+
 					result := &HcResult{
-						Result:    true,
+						Result:    state,
 						Hcid:      ReplyMsg.HC.Hcid,
 						HcType:    ReplyMsg.HC.HcType,
 						Sn:        ReplyMsg.SERIAL,
@@ -679,11 +727,172 @@ func client(me int, mongoSession *mgo.Session) {
 					}
 
 					//so far record is unlocked for next run we need to see if up/down event had in fact happened
-					//this requires running over last N results
+					//this requires running over last N results, and randomly trimming history for given hcid
+					var results []HcResult
 
-					//					if res, err := CheckForUpDownEvent(ReplyMsg); err != nil {
-					//						log.Error("Patient feels funny %s", err)
-					//					}
+					query = bson.M{"hcid": ReplyMsg.HC.Hcid}
+
+					err = hist_conn.Find(query).Sort("-timestamp").All(&results)
+					if err != nil {
+						log.Debug("Query res %v, %s, %v", info, err, query)
+					}
+
+					//these are run time evaluation of flap and status
+					up, down := 0, 0
+					flapping := false
+					rlock := false //this flag stops evaluation yet allows for history cleanup
+
+					//default test settings
+					tup, tdown := 1, 1
+
+					if sup, ok := unlock.Meta["rup"]; ok == true {
+						iup, err := strconv.Atoi(sup.(string))
+						if err == nil && iup < EXPIRECNT_HIST {
+							tup = iup
+						}
+					}
+
+					if sdown, ok := unlock.Meta["rdown"]; ok == true {
+						idown, err := strconv.Atoi(sdown.(string))
+						if err == nil && idown < EXPIRECNT_HIST {
+							tdown = idown
+						}
+					}
+
+					teststr := ""
+
+					for k, v := range results {
+
+						//we have enough to fire event
+						if v.Result == true && !rlock {
+							teststr = fmt.Sprintf("%s%s", teststr, "1")
+							up++
+							if down > 0 {
+								flapping = true
+								rlock = true
+								teststr = fmt.Sprintf("%s%s", teststr, "F")
+								log.Debug("EVAL flopping up %s", v.Hcid)
+							}
+							if up > tup {
+								rlock = true
+								teststr = fmt.Sprintf("%s%s", teststr, "U")
+								log.Debug("EVAL enough up %s", v.Hcid)
+							}
+						} else if v.Result == false && !rlock {
+							teststr = fmt.Sprintf("%s%s", teststr, "0")
+							down++
+							if up > 0 {
+								flapping = true
+								rlock = true
+								teststr = fmt.Sprintf("%s%s", teststr, "F")
+								log.Debug("EVAL flopping down %s", v.Hcid)
+							}
+							if down > tdown {
+								rlock = true
+								teststr = fmt.Sprintf("%s%s", teststr, "D")
+								log.Debug("EVAL enough down %s", v.Hcid)
+							}
+						} else {
+							if v.Result == true {
+								teststr = fmt.Sprintf("%s%s", teststr, "1")
+							} else {
+								teststr = fmt.Sprintf("%s%s", teststr, "0")
+							}
+						}
+
+						//remove old records
+						if k > EXPIRECNT_HIST {
+							log.Debug("CLEAN max cnt %d id %s", k, v.ID.String())
+
+							err = hist_conn.RemoveId(v.ID)
+							if err != nil {
+								log.Warning("CLEAN Can't remove %+v", v.ID.String())
+							}
+						}
+					}
+
+					log.Debug("JUDGE %s (up:%d tup:%d), (dn:%d, tdn:%d)", teststr, up, tup, down, tdown)
+
+					if flapping {
+						log.Debug("JUDGE NO flapping %s", ReplyMsg.HC.Hcid)
+					} else {
+						if up > 0 && up < tup {
+							log.Debug("JUDGE NO %s report up, not enough samples have: %d, need %d ", ReplyMsg.HC.Hcid, up, tup)
+						}
+
+						if down > 0 && down < tdown {
+							log.Debug("JUDGE NO %s report down, not enough samples have: %d, need %d ", ReplyMsg.HC.Hcid, down, tdown)
+						}
+
+						eventresult := HcEvent{}
+						state := HEALTH_DOWN
+
+						if up > 0 && up >= tup {
+							//node up
+							log.Debug("JUDGE YES %s pre report up", ReplyMsg.HC.Hcid)
+							//check report history
+							state = HEALTH_UP
+
+						} else {
+
+							if down > 0 && down >= tdown {
+								//node down
+								log.Debug("JUDGE YES %s pre report down", ReplyMsg.HC.Hcid)
+								state = HEALTH_DOWN
+							}
+						}
+
+						query = bson.M{"hcid": ReplyMsg.HC.Hcid}
+
+						err = event_conn.Find(query).One(&eventresult)
+						if err != nil {
+							log.Debug("JUDGE find EVENT %v, %s, %v, %b", info, err, query, state)
+						}
+
+						//log.Debug("JUDGE %+v", eventresult)
+
+						//if there are no result or
+						//it is different or
+						//it is down for more than 24 hr
+						//or if no ack is set
+						judgedo := false
+
+						if eventresult.SERIAL == "" {
+							log.Notice("JUDGE DO new %s, now: %t", ReplyMsg.HC.Hcid, state)
+							judgedo = true
+						} else if eventresult.Result != state {
+							log.Notice("JUDGE DO change %s, was %t, now: %t", ReplyMsg.HC.Hcid, eventresult.Result, state)
+							judgedo = true
+						} else if eventresult.AckSerial == "" {
+							log.Notice("JUDGE DO ack %s, was %t, now: %t", ReplyMsg.HC.Hcid, eventresult.Result, state)
+							judgedo = true
+						} else if eventresult.Result == HEALTH_DOWN && int32(time.Since(eventresult.ReportedAt).Seconds()) > FORCESEC_REPORT {
+							//report and log
+							log.Notice("JUDGE DO down %s, over %d sec, was %t, now: %t", ReplyMsg.HC.Hcid, FORCESEC_REPORT, eventresult.Result, state)
+							judgedo = true
+						} else {
+							log.Notice("JUDGE NO change %s", ReplyMsg.HC.Hcid)
+						}
+
+						if judgedo {
+							//send event and update db once ack is received
+							//TODO WRAP INTO ZMQ CALL
+
+							eventresult.SERIAL = ReplyMsg.SERIAL
+							eventresult.AckSerial = ReplyMsg.SERIAL
+							eventresult.Hcid = ReplyMsg.HC.Hcid
+							eventresult.Result = state
+							eventresult.ReportedAt = time.Now()
+
+							query = bson.M{"hcid": ReplyMsg.HC.Hcid}
+
+							_, err = event_conn.Upsert(query, eventresult)
+							if err != nil {
+								log.Debug("JUDGE ADD EVENT res %v, %s, %v, %b", info, err, query, state)
+							}
+						}
+
+					}
 
 					//deal with local stats here
 					retriesLeft = NumofRetries

@@ -89,6 +89,5 @@ sed -i "s/THISNODEID/$NODE/g" /etc/ganglia/gmond.conf
 /etc/init.d/ganglia-monitor restart
 
 #TODO
-stop cleaner
 
 echo "done!"

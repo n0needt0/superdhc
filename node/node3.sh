@@ -117,7 +117,6 @@ EOF
 mongo 192.168.42.100:27017/hc /vagrant/node_fakejson.js
 
 #TODO
-stop cleaner
 
 echo "done!"
 

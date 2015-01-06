@@ -21,7 +21,7 @@ mkdir -p /usr/share/ganglia-webfrontend/lib/dwoo/compiled
 chown www-data /usr/share/ganglia-webfrontend/lib/dwoo/cache
 chown www-data /usr/share/ganglia-webfrontend/lib/dwoo/compiled
 
-apt-get install rrdtool gmetad ganglia-webfrontend ganglia-monitor -y
+apt-get install rrdtool gmetad ganglia-webfrontend -y
 
 #using this repo to install ganglia-monitor 3.4 as it allows for server name overwrites
 add-apt-repository ppa:rufustfirefly/ganglia
