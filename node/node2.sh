@@ -14,7 +14,7 @@ chmod 777 /var/log/dhc4
 mkdir -p /etc/dhc4
 chmod 777 /etc/dhc4
 
-echo "$NODE" > /etc/dhc4/dhc4.cfg
+echo "$NODE" > /etc/dhc4/dhc4-name.cfg
 
 #create dhc4 binary dir
 mkdir -p /var/dhc4
@@ -76,7 +76,6 @@ cp /vagrant/etc/monit/conf.d/node /etc/monit/conf.d/
 /sbin/start node
 cp /vagrant/etc/ganglia/gmond_node.conf /etc/ganglia/gmond.conf
 sed -i "s/THISNODEID/$NODE/g" /etc/ganglia/gmond.conf
-
 
 #install MongoDb Ganglia Support
  mkdir /usr/lib/ganglia/python_modules

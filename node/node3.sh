@@ -14,7 +14,7 @@ chmod 777 /var/log/dhc4
 mkdir -p /etc/dhc4
 chmod 777 /etc/dhc4
 
-echo "$NODE" > /etc/dhc4/dhc4.cfg
+echo "$NODE" > /etc/dhc4/dhc4-name.cfg
 
 #create dhc4 binary dir
 mkdir -p /var/dhc4

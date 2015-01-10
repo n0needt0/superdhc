@@ -1,4 +1,4 @@
-NODE=`cat /etc/dhc4/dhc4.cfg`
+NODE=`cat /etc/dhc4/dhc4-name.cfg`
 
 stop cleaner
 

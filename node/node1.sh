@@ -14,7 +14,7 @@ chmod 777 /var/log/dhc4
 mkdir -p /etc/dhc4
 chmod 777 /etc/dhc4
 
-echo "$NODE" > /etc/dhc4/dhc4.cfg
+echo "$NODE" > /etc/dhc4/dhc4-name.cfg
 
 #create dhc4 binary dir
 mkdir -p /var/dhc4
@@ -47,6 +47,10 @@ cp /vagrant/etc/monit/conf.d/cleaner /etc/monit/conf.d/
 #dispatch config
 cp /vagrant/etc/dhc4/dispatch.cfg /etc/dhc4/
 sed -i "s/THISNODEID/$NODE/g" /etc/dhc4/dispatch.cfg
+
+#modify prefered server order
+sed -i 's/MYTARGETS/tcp:\/\/192.168.82.100:6455,tcp:\/\/192.168.82.110:6455,tcp:\/\/192.168.82.120:6455/g' /etc/dhc4/cleaner.cfg
+
 
 #dispatch binary
 cp /vagrant/bin/dispatch /var/dhc4/dispatch

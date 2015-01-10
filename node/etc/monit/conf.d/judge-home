@@ -1,0 +1,10 @@
+#!monit
+set logfile /var/log/monit.log
+
+check process judge-home with pidfile "/var/run/judge-home.pid"
+    start program = "/sbin/start judge-home"
+    stop program  = "/sbin/stop judge-home"
+    if failed port 8094 protocol HTTP
+        request /health
+        with timeout 10 seconds
+        then restart

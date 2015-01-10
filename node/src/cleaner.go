@@ -486,6 +486,10 @@ func client(me int, mongoSession *mgo.Session, db string, collection string) {
 			time.Sleep(time.Duration(1) * time.Second)
 		}
 
+		//just a regular sleep as commanded
+
+		time.Sleep(time.Duration(sleepTime) * time.Millisecond)
+
 		if sequence > Grebalance {
 
 			//rewind to prevent overflow
@@ -533,6 +537,7 @@ func client(me int, mongoSession *mgo.Session, db string, collection string) {
 			//more likely no results are found increase sleep time
 			if sleepTime < 60000 {
 				sleepTime = sleepTime + 100
+
 				log.Debug("Sleep Time %d msec", sleepTime)
 			}
 			continue //nothing to send

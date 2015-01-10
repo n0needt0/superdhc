@@ -1,0 +1,10 @@
+#!monit
+set logfile /var/log/monit.log
+
+check process history-home with pidfile "/var/run/history-home.pid"
+    start program = "/sbin/start history-home"
+    stop program  = "/sbin/stop history-home"
+    if failed port 8094 protocol HTTP
+        request /health
+        with timeout 10 seconds
+        then restart

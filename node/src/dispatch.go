@@ -4,7 +4,7 @@
 package main
 
 import (
-	"bytes"
+	dhc4 "./dhc4"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -47,6 +47,7 @@ const (
 	EXPIRESEC_HIST  = 86400 // maximum time for history to live on this node 24hr
 	EXPIRECNT_HIST  = 10    //maximum number of history records for given health check id
 	FORCESEC_REPORT = 86400 //report down event if still down and older than
+	ZMQ_RANDOM      = -1
 )
 
 //this is log file
@@ -65,7 +66,6 @@ var cfg ini.File
 var Gnodeid string
 var Grebalance int
 var Gdebugdelay bool = false //debugdelay
-var Ghwm int = 1000          //highwatermark
 
 var GStats = struct {
 	RateCounter     *ratecounter.RateCounter
@@ -82,11 +82,15 @@ var GStats = struct {
 }
 
 var HA = struct {
-	Servers []string
-	Timeout time.Duration
-	Retries int
+	NodeServers    []string
+	JudgeServers   []string
+	HistoryServers []string
+	Timeout        time.Duration
+	Retries        int
 	sync.RWMutex
 }{
+	[]string{""},
+	[]string{""},
 	[]string{""},
 	time.Duration(2500) * time.Millisecond,
 	10,
@@ -101,85 +105,6 @@ func GetRandomHaServer(servers []string) (string, int) {
 
 func GetHaServer(servers []string, i int) string {
 	return strings.TrimSpace(servers[i])
-}
-
-//health check structure
-type Hc struct {
-	BusyTs    int32 `json:"bts" bson:"bts"`
-	Sn        string
-	Cron      string
-	LastRunTs int32 `json:"lr" bson:"lr"`
-	NextRunTs int32 `json:"nr" bson:"nr"`
-	Hcid      string
-	HcType    string `json:"hct" bson:"hct"`
-	Ver       string `json:"v" bson:"v"`
-	Meta      map[string]interface{}
-}
-
-type HcResult struct {
-	ID        bson.ObjectId `bson:"_id,omitempty"`
-	Result    bool          `json:"r" bson:"r"`
-	Hcid      string
-	HcType    string
-	Sn        string
-	LastRunTs int32 `json:"lr" bson:"lr"`
-	Meta      map[string]interface{}
-	CreatedAt time.Time `json:"createdAt" bson:"createdAt"`
-}
-
-type HcEvent struct {
-	ID         bson.ObjectId `bson:"_id,omitempty"`
-	SERIAL     string
-	Result     bool
-	Hcid       string
-	AckSerial  string
-	ReportedAt time.Time `json:"reportedAt" bson:"reportedAt"`
-}
-
-type Msg struct {
-	SERIAL string
-	TS     int64
-	ERROR  string
-	HC     Hc
-	RESULT map[string]interface{}
-}
-
-//format request
-var GetRequest = func(serial string, hc Hc) ([]byte, error) {
-	var msg = Msg{
-		SERIAL: serial,
-		TS:     time.Now().Unix(),
-		ERROR:  "",
-		HC:     hc,
-		RESULT: make(map[string]interface{}),
-	}
-
-	jsonstr, err := json.Marshal(msg)
-	if err != nil {
-		return []byte(""), err
-
-	}
-	return jsonstr, nil
-}
-
-//process reply
-var GetReply = func(JsonMsg []byte) (Msg, error, error) {
-	var msg = Msg{}
-
-	d := json.NewDecoder(bytes.NewReader(JsonMsg))
-	d.UseNumber()
-
-	if err := d.Decode(&msg); err != nil {
-		//can not decode it. let cleaner process deal with it
-		return Msg{}, err, nil
-	}
-
-	if msg.ERROR != "" {
-		//decoded it but something is reported from far
-		return msg, nil, errors.New(msg.ERROR)
-	}
-
-	return msg, nil, nil
 }
 
 /**
@@ -404,26 +329,31 @@ func main() {
 		}
 	}
 
-	Ghwm = 1000
-	hwmstr, ok := cfg.Get("zmq", "hwm")
-	if ok {
-		hwmi, err := strconv.Atoi(hwmstr)
-		if err == nil && hwmi > 1000 {
-			Ghwm = hwmi
-		}
-	}
-
 	Grebalance, err = strconv.Atoi(strrebalance)
 	if err != nil {
 		log.Fatal("'strrebalance' parameter malformed in 'zmq' section")
 	}
 
-	targetstr, ok := cfg.Get("zmq", "targets")
+	cfgstr, ok := cfg.Get("zmq", "nodeservers")
 	if !ok {
-		log.Fatal("'targets' missing from 'zmq' section")
+		log.Fatal("'nodeservers' missing from 'zmq' section")
 	}
 
-	HA.Servers = strings.Split(targetstr, ",")
+	HA.NodeServers = strings.Split(cfgstr, ",")
+
+	cfgstr, ok = cfg.Get("zmq", "judgeservers")
+	if !ok {
+		log.Fatal("'judgeservers' missing from 'zmq' section")
+	}
+
+	HA.JudgeServers = strings.Split(cfgstr, ",")
+
+	cfgstr, ok = cfg.Get("zmq", "historyservers")
+	if !ok {
+		log.Fatal("'historyservers' missing from 'zmq' section")
+	}
+
+	HA.HistoryServers = strings.Split(cfgstr, ",")
 
 	HA.Timeout, err = time.ParseDuration(timeoutstr)
 	if err != nil {
@@ -489,7 +419,7 @@ func main() {
 	go func() {
 		//start workers
 		for i := 1; i <= numworkers; i++ {
-			go client(i, MGOsession)
+			go node_client(i, MGOsession)
 			GStats.Lock()
 			GStats.Workers++
 			GStats.Unlock()
@@ -500,7 +430,193 @@ func main() {
 	wg.Wait()
 }
 
-func client(me int, mongoSession *mgo.Session) {
+func get_zmq_client(ctx *zmq.Context, zmqtype zmq.SocketType, servers []string, client_name string, server_index int) (*zmq.Socket, int, error) {
+	//this socket communicates to nodes
+	client, err := ctx.NewSocket(zmqtype)
+	if err != nil {
+		log.Fatalf("can not %s zmq %s", client_name, err)
+		return nil, 0, err
+	}
+
+	homeserver, homeserverindex := GetRandomHaServer(servers)
+	serverindex := homeserverindex
+	if server_index > 0 {
+		homeserver = GetHaServer(servers, server_index)
+		serverindex = server_index
+	}
+
+	log.Debug("%s Home Server %s, %d", client_name, homeserver, homeserverindex)
+
+	err = client.Connect(homeserver)
+	if err != nil {
+		log.Fatalf("can not connect worker to %s server %s", client_name, err)
+		return nil, 0, err
+	}
+	return client, serverindex, nil
+}
+
+//this will let judge know
+
+func tell_judge(serial string, hc dhc4.Hc, history []dhc4.HcResult, state bool, trace map[string]interface{}) (string, error) {
+	context, _ := zmq.NewContext()
+	defer context.Close()
+
+	judge_client, judge_homeserver, err := get_zmq_client(context, zmq.REQ, HA.JudgeServers, "judge", ZMQ_RANDOM)
+	if err != nil {
+		log.Fatalf("JUDGE can not start judge zmq %s", err)
+	}
+
+	//maximum retries per serial number before drop it to the floor and close socket
+	NumofRetries := 5
+
+	if HA.Retries > 0 && HA.Retries < 5 {
+		NumofRetries = HA.Retries
+	}
+
+	sequence := 0
+
+	for {
+		if sequence > Grebalance {
+			sequence = 1 //rewind to prevent overflow, highwater mark is set at 1000 by default
+		}
+
+		sequence++
+
+		if Gdebugdelay {
+			//this is if we set extra delay for debugging
+			time.Sleep(time.Duration(1) * time.Second)
+		}
+
+		judgemessage := dhc4.NewJudgeMsg()
+
+		//Get data for request
+		data, err := judgemessage.Pack(serial, hc, history, state, trace)
+		if err != nil {
+			log.Warning("JUDGE Error Pack %s", err)
+			return "", errors.New(fmt.Sprintf("Error Pack %s", err))
+		}
+
+		log.Debug("JUDGE REQUEST (%s)", data)
+
+		judge_client.Send(data, 0)
+
+		retriesLeft := NumofRetries
+		expectReply := true
+
+		ack := ""
+		errstr := ""
+
+		for expectReply {
+
+			// Poll socket for a reply, with timeout
+			items := zmq.PollItems{
+				zmq.PollItem{Socket: judge_client, Events: zmq.POLLIN},
+			}
+			if _, err := zmq.Poll(items, HA.Timeout); err != nil {
+				errstr = fmt.Sprintf("JUDGE REQUEST Timeout:%s ", serial)
+				log.Warning(errstr)
+				expectReply = false
+			}
+
+			//  Here we process a server reply. If we didn't a reply we close the node_client
+			//  socket and resend the request.
+
+			if item := items[0]; item.REvents&zmq.POLLIN != 0 {
+				//  We got a reply from the server, must match sequence
+				reply, err := item.Socket.Recv(0)
+				if err != nil {
+					errstr = fmt.Sprintf("JUDGE REQUEST: %s ", serial)
+					log.Warning(errstr)
+					expectReply = false
+				}
+
+				log.Debug("JUDGE REPLY %s", reply)
+				//unpack reply  here
+				ReplyMsg, localerr, remoteerr := judgemessage.Unpack(reply)
+
+				if localerr != nil {
+					errstr = fmt.Sprintf("JUDGE Unpack local err:%s : %s", serial, localerr)
+					log.Warning(errstr)
+					expectReply = false
+				}
+
+				if remoteerr != nil {
+					log.Warning("JUDGE Unpack remote err:%s : %s", serial, remoteerr)
+				}
+
+				if ReplyMsg.SERIAL == serial {
+					log.Debug("JUDGE OK seq:%s rep:%s", serial, ReplyMsg.SERIAL)
+					//ok reply returned see whats going on with it
+					//but first unlock the locked hc and set next run time along with result snap
+
+					//TODO
+					judge_client.SetLinger(0)
+					judge_client.Close()
+					return "GOOD", nil
+
+					if res, ok := ReplyMsg.RESULT["ack"]; ok {
+						s := fmt.Sprintf("%s", res)
+						if s != "" {
+							ack = s
+							log.Debug("JUDGE ack received %s ", s)
+						}
+					}
+					expectReply = false
+				} else {
+					errstr = fmt.Sprintf("JUDGE SEQ Mismatch: req: %s rep:%s", serial, ReplyMsg.SERIAL)
+					log.Warning(errstr)
+					expectReply = false
+				}
+			} else {
+
+				//this will re send the message
+
+				if sequence > Grebalance {
+					sequence = 1 //rewind to prevent overflow, highwater mark is set at 1000 by default
+				}
+
+				if judge_homeserver+1 >= len(HA.NodeServers) {
+					judge_homeserver = 0
+				} else {
+					//try another one
+					judge_homeserver++
+				}
+
+				log.Notice("Trying new judge")
+				judge_client.SetLinger(time.Duration(1 * time.Second))
+				judge_client.Close()
+				judge_client, judge_homeserver, err = get_zmq_client(context, zmq.REQ, HA.NodeServers, "judge", judge_homeserver)
+				if err != nil {
+					log.Fatalf("can not failover start judge zmq %s", err)
+				}
+
+				if retriesLeft < 1 {
+					log.Warning("Dropping ...")
+					log.Debug("%s", data)
+
+					//TODO
+					//somehow start throthling here
+					expectReply = false
+				} else {
+
+					log.Notice("Resending...")
+					log.Debug("%s", data)
+					//  Send request again, on new socket
+					judge_client.Send(data, 0)
+					retriesLeft--
+				}
+			}
+		}
+
+		if errstr != "" {
+			return ack, errors.New(errstr)
+		} else {
+			return ack, nil
+		}
+	}
+}
+
+func node_client(me int, mongoSession *mgo.Session) {
 
 	context, _ := zmq.NewContext()
 	defer context.Close()
@@ -514,22 +630,15 @@ func client(me int, mongoSession *mgo.Session) {
 	hist_conn := session.DB(DB_HIST).C(COL_HIST)
 	event_conn := session.DB(DB_EVENT).C(COL_EVENT)
 
-	client, err := context.NewSocket(zmq.REQ)
+	//this socket communicates to nodes
+	node_client, node_homeserver, err := get_zmq_client(context, zmq.REQ, HA.NodeServers, "node", ZMQ_RANDOM)
 	if err != nil {
-		log.Fatalf("can not start worker#%d, %s", me, err)
+		log.Fatalf("can not start node zmq #%d, %s", me, err)
 	}
 
-	//set highwatermark
-	if Ghwm > 1000 {
-		client.SetHWM(Ghwm)
-	}
-
-	homeserver, homeserverindex := GetRandomHaServer(HA.Servers)
-	log.Debug("Home Server %s, %d", homeserver, homeserverindex)
-
-	err = client.Connect(homeserver)
+	history_client, _, err := get_zmq_client(context, zmq.DEALER, HA.HistoryServers, "history", ZMQ_RANDOM)
 	if err != nil {
-		log.Fatalf("can not connect worker#%d, %s", me, err)
+		log.Fatalf("can not start history zmq #%d, %s", me, err)
 	}
 
 	//maximum retries per serial number before drop it to the floor and close socket
@@ -543,7 +652,6 @@ func client(me int, mongoSession *mgo.Session) {
 
 	serial := "" //serial number for each request
 
-	TargetCnt := len(HA.Servers)
 	sequence := 0
 
 	for {
@@ -564,22 +672,23 @@ func client(me int, mongoSession *mgo.Session) {
 			//prefered server is first in [zmq] target list.
 			//in case of failover even this will re try correct server
 
-			if TargetCnt > 1 && homeserver != HA.Servers[0] {
-				homeserverindex = 0
-				homeserver = GetHaServer(HA.Servers, homeserverindex)
-				log.Notice("Rebalancing Home Server %s, %d", homeserver, homeserverindex)
-
-				client.SetLinger(0)
-				client.Close()
-
-				client, err = context.NewSocket(zmq.REQ)
+			if len(HA.NodeServers) > 1 {
+				log.Notice("Rebalancing node home %d", me)
+				node_client.SetLinger(time.Duration(1 * time.Second))
+				node_client.Close()
+				node_client, node_homeserver, err = get_zmq_client(context, zmq.REQ, HA.NodeServers, "node", 0)
 				if err != nil {
-					log.Fatalf("can not start worker %s", err)
+					log.Fatalf("can not start node zmq #%d, %s", me, err)
 				}
+			}
 
-				err = client.Connect(homeserver)
+			if len(HA.HistoryServers) > 1 {
+				log.Notice("Rebalancing history home %d", me)
+				history_client.SetLinger(time.Duration(1 * time.Second))
+				history_client.Close()
+				history_client, _, err = get_zmq_client(context, zmq.DEALER, HA.HistoryServers, "history", 0)
 				if err != nil {
-					log.Fatalf("can not connect worker %s", err)
+					log.Fatalf("can not start history zmq #%d, %s", me, err)
 				}
 			}
 		}
@@ -594,7 +703,7 @@ func client(me int, mongoSession *mgo.Session) {
 			ReturnNew: true,
 		}
 
-		healthcheck := Hc{} //Return unlocked object into this
+		healthcheck := dhc4.Hc{} //Return unlocked object into this
 
 		log.Debug("query %v", query)
 
@@ -612,54 +721,56 @@ func client(me int, mongoSession *mgo.Session) {
 		//wake up we found work
 		sleepTime = 100
 
+		nodemsg := dhc4.NewNodeMsg()
+
 		//Get data for request
-		data, err := GetRequest(serial, healthcheck)
+		data, err := nodemsg.Pack(serial, healthcheck)
 		if err != nil {
-			log.Warning("Error GetRequest %s", err)
+			log.Warning("Error NodeMsg.Pack %s", err)
 			continue
 		}
 
-		log.Debug("Connected to: %s", homeserver)
-		log.Debug("REQUEST (%s)", data)
+		log.Debug("NODE REQUEST (%s)", data)
 
-		client.Send(data, 0)
+		node_client.Send(data, 0)
 
 		retriesLeft := NumofRetries
 		expectReply := true
 
 		for expectReply {
 
-			//  Poll socket for a reply, with timeout
+			// Poll socket for a reply, with timeout
 			items := zmq.PollItems{
-				zmq.PollItem{Socket: client, Events: zmq.POLLIN},
+				zmq.PollItem{Socket: node_client, Events: zmq.POLLIN},
 			}
 			if _, err := zmq.Poll(items, HA.Timeout); err != nil {
-				log.Warning("REQUEST Timeout:%s ", serial)
+				log.Warning("NODE REQUEST Timeout:%s ", serial)
 				expectReply = false
 			}
 
-			//  Here we process a server reply. If we didn't a reply we close the client
+			//  Here we process a server reply. If we didn't a reply we close the node_client
 			//  socket and resend the request.
 
 			if item := items[0]; item.REvents&zmq.POLLIN != 0 {
 				//  We got a reply from the server, must match sequence
 				reply, err := item.Socket.Recv(0)
 				if err != nil {
-					log.Warning("REQUEST: %s ", serial)
+					log.Warning("NODE REPLY: %s ", serial)
 					expectReply = false
 				}
 
-				log.Debug("REPLY %s", reply)
+				log.Debug("NODE REPLY %s", reply)
 				//unpack reply  here
-				ReplyMsg, localerr, remoteerr := GetReply(reply)
+
+				ReplyMsg, localerr, remoteerr := nodemsg.Unpack(reply)
 
 				if localerr != nil {
-					log.Warning("GetReply local err:%s : %s", serial, localerr)
+					log.Warning("NodeMsg.Unpack local err:%s : %s", serial, localerr)
 					expectReply = false
 				}
 
 				if remoteerr != nil {
-					log.Warning("GetReply remote err:%s : %s", serial, remoteerr)
+					log.Warning("NodeMsg.Unpack remote err:%s : %s", serial, remoteerr)
 				}
 
 				if ReplyMsg.SERIAL == serial {
@@ -689,7 +800,7 @@ func client(me int, mongoSession *mgo.Session) {
 						ReturnNew: true,
 					}
 
-					unlock := Hc{} //Return query object into this
+					unlock := dhc4.Hc{} //Return query object into this
 
 					log.Debug("query %v", query)
 
@@ -711,12 +822,23 @@ func client(me int, mongoSession *mgo.Session) {
 
 					}
 
-					result := &HcResult{
+					//fire result to history server
+
+					//just pass it on
+					log.Debug("HISTORY LOG %+v", ReplyMsg)
+
+					//let history servers take it apart
+					err = history_client.Send(reply, 0)
+					if err != nil {
+						log.Debug("HISTORY ERR %+v", err)
+					}
+
+					result := &dhc4.HcResult{
 						Result:    state,
 						Hcid:      ReplyMsg.HC.Hcid,
 						HcType:    ReplyMsg.HC.HcType,
 						Sn:        ReplyMsg.SERIAL,
-						LastRunTs: ReplyMsg.HC.LastRunTs,
+						LastRunTs: ReplyMsg.TS,
 						Meta:      ReplyMsg.RESULT,
 						CreatedAt: time.Now(),
 					}
@@ -728,7 +850,7 @@ func client(me int, mongoSession *mgo.Session) {
 
 					//so far record is unlocked for next run we need to see if up/down event had in fact happened
 					//this requires running over last N results, and randomly trimming history for given hcid
-					var results []HcResult
+					var results []dhc4.HcResult
 
 					query = bson.M{"hcid": ReplyMsg.HC.Hcid}
 
@@ -824,7 +946,7 @@ func client(me int, mongoSession *mgo.Session) {
 							log.Debug("JUDGE NO %s report down, not enough samples have: %d, need %d ", ReplyMsg.HC.Hcid, down, tdown)
 						}
 
-						eventresult := HcEvent{}
+						eventresult := dhc4.HcEvent{}
 						state := HEALTH_DOWN
 
 						if up > 0 && up >= tup {
@@ -848,8 +970,6 @@ func client(me int, mongoSession *mgo.Session) {
 						if err != nil {
 							log.Debug("JUDGE find EVENT %v, %s, %v, %b", info, err, query, state)
 						}
-
-						//log.Debug("JUDGE %+v", eventresult)
 
 						//if there are no result or
 						//it is different or
@@ -876,10 +996,20 @@ func client(me int, mongoSession *mgo.Session) {
 
 						if judgedo {
 							//send event and update db once ack is received
+							ack, err := tell_judge(ReplyMsg.SERIAL, ReplyMsg.HC, results, state, ReplyMsg.RESULT)
+							if err != nil {
+								log.Error("JUDGE err %s", err)
+							}
+
+							if ack == "" {
+								log.Warning("JUDGE empty ack")
+							}
+
+							log.Notice("JUDGE SAYS %s", ack)
 							//TODO WRAP INTO ZMQ CALL
 
 							eventresult.SERIAL = ReplyMsg.SERIAL
-							eventresult.AckSerial = ReplyMsg.SERIAL
+							eventresult.AckSerial = ack
 							eventresult.Hcid = ReplyMsg.HC.Hcid
 							eventresult.Result = state
 							eventresult.ReportedAt = time.Now()
@@ -913,29 +1043,23 @@ func client(me int, mongoSession *mgo.Session) {
 					sequence = 1 //rewind to prevent overflow, highwater mark is set at 1000 by default
 				}
 
-				if homeserverindex+1 >= len(HA.Servers) {
-					homeserverindex = 0
+				if node_homeserver+1 >= len(HA.NodeServers) {
+					node_homeserver = 0
 				} else {
 					//try another one
-					homeserverindex++
+					node_homeserver++
 				}
 
 				GStats.Lock()
 				GStats.ConsecutiveDead++
 				GStats.Unlock()
 
-				homeserver = GetHaServer(HA.Servers, homeserverindex)
-				log.Warning("%d trying %s", NumofRetries-retriesLeft+1, homeserver)
-				//  Old socket is confused; close it and open a new one
-				client.SetLinger(0)
-				client.Close()
-				client, err = context.NewSocket(zmq.REQ)
+				log.Notice("Trying new node home %d", me)
+				node_client.SetLinger(time.Duration(1 * time.Second))
+				node_client.Close()
+				node_client, node_homeserver, err = get_zmq_client(context, zmq.REQ, HA.NodeServers, "node", node_homeserver)
 				if err != nil {
-					log.Fatalf("can not start worker %s", err)
-				}
-				err = client.Connect(homeserver)
-				if err != nil {
-					log.Fatalf("can not connect worker %s", err)
+					log.Fatalf("can not failover start node zmq #%d, %s", me, err)
 				}
 
 				if retriesLeft < 1 {
@@ -950,7 +1074,7 @@ func client(me int, mongoSession *mgo.Session) {
 					log.Notice("Resending...")
 					log.Debug("%s", data)
 					//  Send request again, on new socket
-					client.Send(data, 0)
+					node_client.Send(data, 0)
 					retriesLeft--
 				}
 			}

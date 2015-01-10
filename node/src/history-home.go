@@ -1,21 +1,17 @@
 package main
 
 import (
-	dhc4 "./dhc4"
-	"GoStats/stats"
+	"bytes"
 	"container/list"
 	"encoding/json"
-	//"errors"
 	"flag"
 	"fmt"
 	zmq "github.com/alecthomas/gozmq"
 	"github.com/gorilla/pat"
 	logging "github.com/op/go-logging"
 	"github.com/paulbellamy/ratecounter"
-
 	"github.com/vaughan0/go-ini"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -30,15 +26,12 @@ import (
 
 //TODO may move to config one day
 const (
-	HEARTBEAT_INTERVAL   = time.Second      //  time.Duration
-	HEARTBEAT_LIVENESS   = 3                //  1-3 is good
-	INTERVAL_INIT        = time.Second      //  Initial reconnect
-	INTERVAL_MAX         = 32 * time.Second //  After exponential backoff
-	PPP_READY            = "\001"           //  Signals worker is ready
-	PPP_HEARTBEAT        = "\002"           //  Signals worker heartbeat
-	STATS_WINDOW_SECONDS = 60
-	HEALTH_STATE_UP      = 1
-	HEALTH_STATE_DOWN    = 0
+	HEARTBEAT_INTERVAL = time.Second      //  time.Duration
+	HEARTBEAT_LIVENESS = 3                //  1-3 is good
+	INTERVAL_INIT      = time.Second      //  Initial reconnect
+	INTERVAL_MAX       = 32 * time.Second //  After exponential backoff
+	PPP_READY          = "\001"           //  Signals worker is ready
+	PPP_HEARTBEAT      = "\002"           //  Signals worker heartbeat
 )
 
 //this is log file
@@ -46,13 +39,15 @@ var logFile *os.File
 var logFormat = logging.MustStringFormatter("%{color}%{time:15:04:05.000000} %{shortfunc} ▶ %{level:.4s} %{id:03x}%{color:reset} %{message}")
 var log = logging.MustGetLogger("logfile")
 var Gloglevel logging.Level = logging.DEBUG
-var GTestStats []string = []string{"ping_total_ms", "tcp_total_ms", "dns_total_ms", "http_get_total_ms", "http_head_total_ms", "http_post_total_ms"}
+var Gdebugdelay bool = false
+
+//this where errors go to die
+var err error
 
 //the followign are flags passed from commandline
-var Configfile *string = flag.String("config", "/etc/dhc4/node.cfg", "Config file location default: /etc/fortihealth/node.cfg")
+var Configfile *string = flag.String("config", "/etc/dhc4/history-home.cfg", "Config file location default: /etc/dhc4/history-home.cfg")
 var help *bool = flag.Bool("help", false, "Show options")
 var cfg ini.File
-var Gdebugdelay bool = false //debugdelay
 
 //uris for front facing and back facing connections
 var Gbackuri, Gfronturi string
@@ -62,43 +57,52 @@ var GStats = struct {
 	RateCounter *ratecounter.RateCounter
 	Rate        int64
 	Workers     int
-	Details     map[string]*stats.Stats
 	sync.RWMutex
 }{
 	ratecounter.NewRateCounter(time.Duration(1) * time.Second),
 	int64(0),
 	0,
-	make(map[string]*stats.Stats),
 	sync.RWMutex{},
 }
 
-type HcTester interface {
-	DoTest(map[string]interface{}) error
+//generic message
+type Msg struct {
+	SERIAL string
+	TS     int64
+	ERROR  string
+	HC     interface{}
+	RESULT map[string]interface{}
 }
 
-//ping headers
-type response struct {
-	addr *net.IPAddr
-	rtt  time.Duration
+//Helper function to precess requests
+var GetRequest = func(JsonMsg []byte) (Msg, error) {
+	var msg = Msg{
+		SERIAL: "",
+		TS:     0,
+		ERROR:  "",
+		HC:     nil,
+		RESULT: make(map[string]interface{}),
+	}
+
+	d := json.NewDecoder(bytes.NewReader(JsonMsg))
+	d.UseNumber()
+
+	if err := d.Decode(&msg); err != nil {
+		return msg, err
+	}
+
+	return msg, nil
 }
 
-type TimeoutMsec struct {
-	Overall   int
-	Dns       int
-	Test      int
-	AfterTest int
-}
+var GetReply = func(msg Msg) ([]byte, error) {
 
-type HcPing struct {
-	Host        string
-	TimeoutMsec TimeoutMsec //Various timeouts
-	Plossok     float32     //percent loss
-	Packets     int         //we use 4 iterations to test by default up to 10 otherwise
-	Size        int         //packet byte size 10 to 100
-	Res         map[string]interface{}
-}
+	jsonstr, err := json.Marshal(msg)
+	if err != nil {
+		return []byte("{}"), err
+	}
 
-//ping headers
+	return jsonstr, nil
+}
 
 //parse command line
 func init() {
@@ -222,24 +226,20 @@ func main() {
 		log.Fatal("'loglevel' missing from 'system' section")
 	}
 
-	loglevel = strings.ToUpper(loglevel)
-
 	Gloglevel, err = logging.LogLevel(loglevel)
 	if err != nil {
 		Gloglevel = logging.DEBUG
 	}
-
+	logging.SetLevel(Gloglevel, "")
 	logging.SetBackend(logformatted)
 
 	//see what we have here
 	for name, section := range cfg {
-		log.Info("Section: %v\n", name)
+		log.Debug("Section: %v\n", name)
 		for k, v := range section {
-			log.Info("%v: %v\n", k, v)
+			log.Debug("%v: %v\n", k, v)
 		}
 	}
-
-	logging.SetLevel(Gloglevel, "")
 
 	//kill channel to programatically
 	killch := make(chan os.Signal, 1)
@@ -301,7 +301,6 @@ func main() {
 		r.Get("/health", http.HandlerFunc(healthHandle))
 		r.Get("/loglevel/{loglevel}", http.HandlerFunc(logHandle))
 		r.Get("/delay", http.HandlerFunc(delayHandle))
-
 		http.Handle("/", r)
 
 		log.Notice("Listening %s : %s", httphost, httpport)
@@ -317,11 +316,6 @@ func main() {
 	wg.Add(1)
 
 	go func() {
-
-		//initialize system detail stats collectors
-		for _, stat_name := range GTestStats {
-			GStats.Details[stat_name] = &stats.Stats{}
-		}
 
 		//see if we run as slave no reason to run own router process
 		//workers will use what ever specified in masteruri
@@ -375,28 +369,12 @@ func main() {
 		go func() {
 			for {
 				select {
-				case <-time.After(time.Duration(STATS_WINDOW_SECONDS) * time.Second):
+				case <-time.After(time.Duration(5) * time.Second):
 					GStats.Lock()
 					GStats.Rate = GStats.RateCounter.Rate()
 					GStats.Workers = workers.Len()
-
-					for _, stat_name := range GTestStats {
-						//only if observed
-						if GStats.Details[stat_name].Count() > 0 {
-							log.Notice("SYS %s Count:  %d", stat_name, GStats.Details[stat_name].Count())
-							log.Notice("SYS %s Min:  %f", stat_name, GStats.Details[stat_name].Min())
-							log.Notice("SYS %s Max:  %f", stat_name, GStats.Details[stat_name].Max())
-							log.Notice("SYS %s Mean:  %f", stat_name, GStats.Details[stat_name].Mean())
-						}
-					}
-
-					//reset stats so we only collect what we need
-					for _, stat_name := range GTestStats {
-						GStats.Details[stat_name] = &stats.Stats{}
-					}
-
 					GStats.Unlock()
-					log.Notice("SYS: for last %d sec: rate %d req/sec, workers %d", STATS_WINDOW_SECONDS, GStats.Rate, GStats.Workers)
+					log.Info("rate %d req/sec, workers %d", GStats.Rate, GStats.Workers)
 				}
 			}
 		}()
@@ -429,7 +407,6 @@ func main() {
 
 				//  Validate control message, or return reply to client
 				if msg := frames[1:]; len(msg) == 1 {
-
 					switch status := string(msg[0]); status {
 					case PPP_READY:
 						//log.Debug("rcv. ready")
@@ -438,7 +415,6 @@ func main() {
 					default:
 						log.Warning("Invalid message from worker: %v", msg)
 					}
-
 				} else {
 					GStats.RateCounter.Incr(int64(1))
 					frontend.SendMultipart(msg, 0)
@@ -501,9 +477,6 @@ func worker() {
 	heartbeatAt := time.Now().Add(HEARTBEAT_INTERVAL)
 
 	for {
-
-		//timeout channel, it will be pased to everything below and when it closes we return to calling
-
 		items := zmq.PollItems{
 			zmq.PollItem{Socket: worker, Events: zmq.POLLIN},
 		}
@@ -517,231 +490,27 @@ func worker() {
 				worker.Close()
 			}
 
-			if len(frames) == 3 {
+			if len(frames) == 2 {
 
 				//real work
-				nodemsg := dhc4.NewNodeMsg()
 
-				msg, err, _ := nodemsg.Unpack(frames[2])
+				msg, err := GetRequest(frames[1])
 				if err != nil {
 					log.Warning("GetRequest %s", err)
 				}
 
 				log.Debug("request %+v", msg)
 
-				//do work
+				//TODO do work log to database, ets
 
-				hctype := strings.TrimSpace(strings.ToUpper(msg.HC.HcType))
-
-				switch hctype {
-				case "DNS":
-					testStart := makeTimestamp()
-
-					//chanel on which results if any will come from the ping
-					reschan := make(chan map[string]interface{})
-
-					log.Debug("\n%s spec %v\n", hctype, msg.HC.Meta)
-
-					//return ping struct with proposed config, will fill in default values
-					hcdns, err := dhc4.NewDns(msg.HC.Meta)
-
-					if err != nil {
-						//not much we can do without ping obj
-						msg.ERROR = fmt.Sprintf("%s", err)
-						log.Warning("%s", msg.ERROR)
-					} else {
-						//fireaway
-						go hcdns.DoTest(reschan)
-
-						testing := true
-
-						for testing {
-							select {
-							case res := <-reschan:
-								log.Debug("DNS RES: %+v", res)
-								//copy what we got
-								for k, v := range res {
-									hcdns.Res[string(k)] = v
-								}
-								testing = false
-							case <-time.After(time.Duration(hcdns.Timeout) * time.Second):
-								msg := fmt.Sprintf("DNS: %s:%s timeout %d sec", hcdns.Host, hcdns.RecType, hcdns.Timeout)
-								log.Warning(msg)
-								hcdns.Res["msg"] = msg
-								testing = false
-							}
-						}
-					}
-
-					totalTestTime := makeTimestamp() - testStart
-					hcdns.Res["total_ms"] = totalTestTime
-					//GStats.Details["dns_total_ms"].Update(float64(totalTestTime))
-					log.Debug("DNS RESULT %+v", hcdns.Res)
-					log.Debug("DNS Exit %s", hcdns.Host)
-					msg.RESULT = hcdns.Res
-
-				case "TCP":
-					testStart := makeTimestamp()
-
-					//chanel on which results if any will come from the ping
-					reschan := make(chan map[string]interface{})
-
-					log.Debug("%s spec %v", hctype, msg.HC.Meta)
-
-					//return ping struct with proposed config, will fill in default values
-					hctcp, err := dhc4.NewTcp(msg.HC.Meta)
-
-					if err != nil {
-						//not much we can do without ping obj
-						msg.ERROR = fmt.Sprintf("%s", err)
-						log.Warning("%s", msg.ERROR)
-					} else {
-						//fireaway
-						go hctcp.DoTest(reschan)
-
-						testing := true
-
-						for testing {
-							select {
-							case res := <-reschan:
-								log.Debug("TCP RES: %+v", res)
-								//copy what we got
-								for k, v := range res {
-									hctcp.Res[string(k)] = v
-								}
-								testing = false
-							case <-time.After(time.Duration(hctcp.Timeout) * time.Second):
-								msg := fmt.Sprintf("TCP: %s %s:%s timeout %d sec", hctcp.Proto, hctcp.Host, hctcp.Port, hctcp.Timeout)
-								log.Warning(msg)
-								hctcp.Res["msg"] = msg
-								testing = false
-							}
-						}
-					}
-
-					totalTestTime := makeTimestamp() - testStart
-					hctcp.Res["total_ms"] = totalTestTime
-					//GStats.Details["tcp_total_ms"].Update(float64(totalTestTime))
-					log.Debug("TCP RESULT %+v", hctcp.Res)
-					log.Debug("TCP Exit %s", hctcp.Host)
-					msg.RESULT = hctcp.Res
-
-				case "PING":
-					testStart := makeTimestamp()
-
-					//chanel on which results if any will come from the ping
-					reschan := make(chan map[string]interface{})
-
-					log.Debug("%s spec %v", hctype, msg.HC.Meta)
-
-					//return ping struct with proposed config, will fill in default values
-					hcping, err := dhc4.NewPing(msg.HC.Meta)
-
-					if err != nil {
-						//not much we can do without ping obj
-						msg.ERROR = fmt.Sprintf("%s", err)
-						log.Warning("%s", msg.ERROR)
-					} else {
-						//fireaway
-						go hcping.DoTest(reschan)
-
-						testing := true
-
-						for testing {
-							select {
-							case res := <-reschan:
-								log.Debug("PING RES: %+v", res)
-								//copy what we got
-								for k, v := range res {
-									hcping.Res[string(k)] = v
-								}
-								testing = false
-							case <-time.After(time.Duration(hcping.Timeout) * time.Second):
-								msg := fmt.Sprintf("PING: %s timeout %d sec", hcping.Host, hcping.Timeout)
-								log.Warning(msg)
-								hcping.Res["msg"] = msg
-								testing = false
-							}
-						}
-					}
-
-					totalTestTime := makeTimestamp() - testStart
-					hcping.Res["total_ms"] = totalTestTime
-					//GStats.Details["ping_total_ms"].Update(float64(totalTestTime))
-					log.Debug("PING RESULT %+v", hcping.Res)
-					log.Debug("PING Exit %s", hcping.Host)
-					msg.RESULT = hcping.Res
-
-				case "HTTP_GET", "HTTP_POST", "HTTP_HEAD":
-					log.Info("%s test params %v", hctype, msg.HC.Meta)
-					testStart := makeTimestamp()
-
-					//chanel on which results if any will come from the ping
-					reschan := make(chan map[string]interface{})
-
-					log.Debug("%s spec %v\n", hctype, msg.HC.Meta)
-
-					//return ping struct with proposed config, will fill in default values
-					hchttp, err := dhc4.NewHttp(msg.HC.Meta)
-					if err != nil {
-						//not much we can do without ping obj
-						msg.ERROR = fmt.Sprintf("%s", err)
-						log.Warning("%s", msg.ERROR)
-					} else {
-						//fireaway sett proper request
-						switch hctype {
-						case "HTTP_GET":
-							hchttp.Request = "get"
-						case "HTTP_POST":
-							hchttp.Request = "post"
-						case "HTTP_HEAD":
-							hchttp.Request = "head"
-						}
-
-						go hchttp.DoTest(reschan)
-
-						testing := true
-
-						for testing {
-							select {
-							case res := <-reschan:
-								log.Debug("\nHTTP RES: %+v", res)
-								//copy what we got
-								for k, v := range res {
-									hchttp.Res[string(k)] = v
-								}
-								testing = false
-							case <-time.After(time.Duration(hchttp.Timeout+1) * time.Second):
-								msg := fmt.Sprintf("HTTP: %s://%s/%s timeout %d sec", hchttp.Proto, hchttp.Host, strings.Trim(hchttp.Url, "/"), hchttp.Timeout)
-								log.Warning(msg)
-								hchttp.Res["msg"] = msg
-								testing = false
-							}
-						}
-					}
-
-					totalTestTime := makeTimestamp() - testStart
-					hchttp.Res["total_ms"] = totalTestTime
-					//GStats.Details[fmt.Sprintf("http_%s_total_ms", hchttp.Request)].Update(float64(totalTestTime))
-					log.Debug("HTTP RESULT %+v", hchttp.Res)
-					log.Debug("HTTP Exit %s", hchttp.Host)
-					msg.RESULT = hchttp.Res
-
-				default:
-					log.Debug("%s test params %v", hctype, msg.HC.Meta)
-					msg.ERROR = fmt.Sprintf("Invalid Test Submitted \"%s\"", msg.HC.HcType)
-				}
-
-				//pack updated message back to json
-
-				Reply, err := nodemsg.Marshal(msg)
+				Reply, err := GetReply(msg)
 				if err != nil {
 					log.Warning("GetReply %s", err)
 				}
 
 				log.Debug("reply %+v", msg)
 
-				frames[2] = Reply
+				frames[1] = Reply
 
 				worker.SendMultipart(frames, 0)
 

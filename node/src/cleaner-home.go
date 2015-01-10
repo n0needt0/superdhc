@@ -18,9 +18,20 @@ import (
 	"reflect"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
+)
+
+//TODO may move to config one day
+const (
+	HEARTBEAT_INTERVAL = time.Second      //  time.Duration
+	HEARTBEAT_LIVENESS = 3                //  1-3 is good
+	INTERVAL_INIT      = time.Second      //  Initial reconnect
+	INTERVAL_MAX       = 32 * time.Second //  After exponential backoff
+	PPP_READY          = "\001"           //  Signals worker is ready
+	PPP_HEARTBEAT      = "\002"           //  Signals worker heartbeat
 )
 
 //this is log file
@@ -28,12 +39,13 @@ var logFile *os.File
 var logFormat = logging.MustStringFormatter("%{color}%{time:15:04:05.000000} %{shortfunc} ▶ %{level:.4s} %{id:03x}%{color:reset} %{message}")
 var log = logging.MustGetLogger("logfile")
 var Gloglevel logging.Level = logging.DEBUG
+var Gdebugdelay bool = false
 
 //this where errors go to die
 var err error
 
 //the followign are flags passed from commandline
-var Configfile *string = flag.String("config", "/etc/fortihealth/node.cfg", "Config file location default: /etc/fortihealth/node.cfg")
+var Configfile *string = flag.String("config", "/etc/dhc4/cleaner-home.cfg", "Config file location default: /etc/dhc4/cleaner-home.cfg")
 var help *bool = flag.Bool("help", false, "Show options")
 var cfg ini.File
 
@@ -53,41 +65,36 @@ var GStats = struct {
 	sync.RWMutex{},
 }
 
-//TODO may move to config one day
-const (
-	HEARTBEAT_INTERVAL = time.Second      //  time.Duration
-	HEARTBEAT_LIVENESS = 3                //  1-3 is good
-	INTERVAL_INIT      = time.Second      //  Initial reconnect
-	INTERVAL_MAX       = 32 * time.Second //  After exponential backoff
-	PPP_READY          = "\001"           //  Signals worker is ready
-	PPP_HEARTBEAT      = "\002"           //  Signals worker heartbeat
-)
+//generic message
+type Msg struct {
+	SERIAL string
+	TS     int64
+	ERROR  string
+	HC     interface{}
+	RESULT map[string]interface{}
+}
 
 //Helper function to precess requests
-
-var GetReply = func(JsonMsg []byte) ([]byte, error) {
-	var msg = struct {
-		SERIAL string
-		TS     int64
-		ERROR  error
-		LOAD   map[string]interface{}
-	}{
+var GetRequest = func(JsonMsg []byte) (Msg, error) {
+	var msg = Msg{
 		SERIAL: "",
 		TS:     0,
-		ERROR:  nil,
-		LOAD:   make(map[string]interface{}),
+		ERROR:  "",
+		HC:     nil,
+		RESULT: make(map[string]interface{}),
 	}
 
 	d := json.NewDecoder(bytes.NewReader(JsonMsg))
 	d.UseNumber()
 
 	if err := d.Decode(&msg); err != nil {
-		msg.ERROR = err
+		return msg, err
 	}
 
-	if err != nil {
-		msg.ERROR = err
-	}
+	return msg, nil
+}
+
+var GetReply = func(msg Msg) ([]byte, error) {
 
 	jsonstr, err := json.Marshal(msg)
 	if err != nil {
@@ -277,6 +284,13 @@ func main() {
 		log.Fatalf("'backuri' missing from 'zmq' section")
 	}
 
+	ddelay, ok := cfg.Get("system", "debugdelay")
+	if ok {
+		if ddelayb, err := strconv.ParseBool(ddelay); err == nil {
+			Gdebugdelay = ddelayb
+		}
+	}
+
 	//we need to start 2 servers, http for status and zmq
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
@@ -285,7 +299,8 @@ func main() {
 
 		r := pat.New()
 		r.Get("/health", http.HandlerFunc(healthHandle))
-
+		r.Get("/loglevel/{loglevel}", http.HandlerFunc(logHandle))
+		r.Get("/delay", http.HandlerFunc(delayHandle))
 		http.Handle("/", r)
 
 		log.Notice("Listening %s : %s", httphost, httpport)
@@ -394,9 +409,9 @@ func main() {
 				if msg := frames[1:]; len(msg) == 1 {
 					switch status := string(msg[0]); status {
 					case PPP_READY:
-						log.Debug("rcv. ready")
+						//log.Debug("rcv. ready")
 					case PPP_HEARTBEAT:
-						log.Debug("rcv. heartbeat")
+						//log.Debug("rcv. heartbeat")
 					default:
 						log.Warning("Invalid message from worker: %v", msg)
 					}
@@ -478,26 +493,43 @@ func worker() {
 			if len(frames) == 3 {
 
 				//real work
-				ReplyLoad, err := GetReply(frames[2])
 
+				msg, err := GetRequest(frames[2])
+				if err != nil {
+					log.Warning("GetRequest %s", err)
+				}
+
+				log.Debug("request %+v", msg)
+
+				//do work
+
+				msg.RESULT["ack"] = msg.SERIAL
+
+				//if needed reply
+				Reply, err := GetReply(msg)
 				if err != nil {
 					log.Warning("GetReply %s", err)
 				}
 
-				log.Debug("load %s", ReplyLoad)
+				log.Debug("reply %+v", msg)
 
-				frames[2] = ReplyLoad
+				frames[2] = Reply
 
-				time.Sleep(1 * time.Millisecond) //just to make it lil slower
 				worker.SendMultipart(frames, 0)
 
 				liveness = HEARTBEAT_LIVENESS
 
+				if Gdebugdelay {
+					//this is if we set extra delay for debugging
+					log.Notice("Sleeping 1 sec..")
+					time.Sleep(time.Duration(1) * time.Second)
+				}
+
 			} else if len(frames) == 1 && string(frames[0]) == PPP_HEARTBEAT {
-				log.Debug("rcv. queue heartbeat")
+				//log.Debug("rcv. queue heartbeat")
 				liveness = HEARTBEAT_LIVENESS
 			} else {
-				log.Debug("rcv. invalid message")
+				log.Warning("rcv. invalid message")
 			}
 			interval = INTERVAL_INIT
 		} else if liveness--; liveness == 0 {
@@ -523,6 +555,37 @@ func serve404(w http.ResponseWriter) {
 	w.WriteHeader(http.StatusNotFound)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	io.WriteString(w, "Not Found")
+}
+
+func delayHandle(w http.ResponseWriter, r *http.Request) {
+
+	if Gdebugdelay {
+		Gdebugdelay = false
+	} else {
+		Gdebugdelay = true
+	}
+	log.Notice("Debug delay %t", Gdebugdelay)
+	io.WriteString(w, fmt.Sprintf("\ndelay: %t\n", Gdebugdelay))
+}
+
+func logHandle(w http.ResponseWriter, r *http.Request) {
+
+	loglevel := r.URL.Query().Get(":loglevel")
+
+	loglevel = strings.ToUpper(loglevel)
+
+	Gloglevel, err := logging.LogLevel(loglevel)
+	if err != nil {
+		Gloglevel = logging.DEBUG
+		loglevel = "DEBUG"
+	}
+
+	res := fmt.Sprintf("\nSetting log level to: %s \n Valid log levels are CRITICAL, ERROR,  WARNING, NOTICE, INFO, DEBUG\n", loglevel)
+
+	log.Notice(res)
+
+	logging.SetLevel(Gloglevel, "")
+	io.WriteString(w, res)
 }
 
 func healthHandle(w http.ResponseWriter, r *http.Request) {
@@ -562,4 +625,8 @@ func dump(t interface{}) string {
 	}
 
 	return res
+}
+
+func makeTimestamp() int64 {
+	return time.Now().UnixNano() / int64(time.Millisecond)
 }
