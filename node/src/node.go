@@ -53,6 +53,7 @@ var Configfile *string = flag.String("config", "/etc/dhc4/node.cfg", "Config fil
 var help *bool = flag.Bool("help", false, "Show options")
 var cfg ini.File
 var Gdebugdelay bool = false //debugdelay
+var Glocation string = dhc4.UNKNOWN
 
 //uris for front facing and back facing connections
 var Gbackuri, Gfronturi string
@@ -88,17 +89,6 @@ type TimeoutMsec struct {
 	Test      int
 	AfterTest int
 }
-
-type HcPing struct {
-	Host        string
-	TimeoutMsec TimeoutMsec //Various timeouts
-	Plossok     float32     //percent loss
-	Packets     int         //we use 4 iterations to test by default up to 10 otherwise
-	Size        int         //packet byte size 10 to 100
-	Res         map[string]interface{}
-}
-
-//ping headers
 
 //parse command line
 func init() {
@@ -253,6 +243,11 @@ func main() {
 	}()
 
 	//get goodies from config file
+	Glocation, ok = cfg.Get("system", "location")
+	if !ok {
+		log.Fatal("'location' missing from 'system' section")
+	}
+
 	//http server
 	httphost, ok := cfg.Get("http", "host")
 	if !ok {
@@ -502,8 +497,6 @@ func worker() {
 
 	for {
 
-		//timeout channel, it will be pased to everything below and when it closes we return to calling
-
 		items := zmq.PollItems{
 			zmq.PollItem{Socket: worker, Events: zmq.POLLIN},
 		}
@@ -537,20 +530,19 @@ func worker() {
 				case "DNS":
 					testStart := makeTimestamp()
 
-					//chanel on which results if any will come from the ping
 					reschan := make(chan map[string]interface{})
 
 					log.Debug("\n%s spec %v\n", hctype, msg.HC.Meta)
 
-					//return ping struct with proposed config, will fill in default values
 					hcdns, err := dhc4.NewDns(msg.HC.Meta)
 
+					log.Debug("spec parcsed %+v", hcdns)
+
 					if err != nil {
-						//not much we can do without ping obj
 						msg.ERROR = fmt.Sprintf("%s", err)
 						log.Warning("%s", msg.ERROR)
 					} else {
-						//fireaway
+
 						go hcdns.DoTest(reschan)
 
 						testing := true
@@ -575,7 +567,6 @@ func worker() {
 
 					totalTestTime := makeTimestamp() - testStart
 					hcdns.Res["total_ms"] = totalTestTime
-					//GStats.Details["dns_total_ms"].Update(float64(totalTestTime))
 					log.Debug("DNS RESULT %+v", hcdns.Res)
 					log.Debug("DNS Exit %s", hcdns.Host)
 					msg.RESULT = hcdns.Res
@@ -583,20 +574,18 @@ func worker() {
 				case "TCP":
 					testStart := makeTimestamp()
 
-					//chanel on which results if any will come from the ping
 					reschan := make(chan map[string]interface{})
 
 					log.Debug("%s spec %v", hctype, msg.HC.Meta)
 
-					//return ping struct with proposed config, will fill in default values
 					hctcp, err := dhc4.NewTcp(msg.HC.Meta)
 
+					log.Debug("spec parsed %+v", hctcp)
+
 					if err != nil {
-						//not much we can do without ping obj
 						msg.ERROR = fmt.Sprintf("%s", err)
 						log.Warning("%s", msg.ERROR)
 					} else {
-						//fireaway
 						go hctcp.DoTest(reschan)
 
 						testing := true
@@ -605,7 +594,6 @@ func worker() {
 							select {
 							case res := <-reschan:
 								log.Debug("TCP RES: %+v", res)
-								//copy what we got
 								for k, v := range res {
 									hctcp.Res[string(k)] = v
 								}
@@ -621,7 +609,6 @@ func worker() {
 
 					totalTestTime := makeTimestamp() - testStart
 					hctcp.Res["total_ms"] = totalTestTime
-					//GStats.Details["tcp_total_ms"].Update(float64(totalTestTime))
 					log.Debug("TCP RESULT %+v", hctcp.Res)
 					log.Debug("TCP Exit %s", hctcp.Host)
 					msg.RESULT = hctcp.Res
@@ -634,15 +621,14 @@ func worker() {
 
 					log.Debug("%s spec %v", hctype, msg.HC.Meta)
 
-					//return ping struct with proposed config, will fill in default values
 					hcping, err := dhc4.NewPing(msg.HC.Meta)
 
+					log.Debug("spec parsed %+v", hcping)
+
 					if err != nil {
-						//not much we can do without ping obj
 						msg.ERROR = fmt.Sprintf("%s", err)
 						log.Warning("%s", msg.ERROR)
 					} else {
-						//fireaway
 						go hcping.DoTest(reschan)
 
 						testing := true
@@ -651,7 +637,6 @@ func worker() {
 							select {
 							case res := <-reschan:
 								log.Debug("PING RES: %+v", res)
-								//copy what we got
 								for k, v := range res {
 									hcping.Res[string(k)] = v
 								}
@@ -667,7 +652,6 @@ func worker() {
 
 					totalTestTime := makeTimestamp() - testStart
 					hcping.Res["total_ms"] = totalTestTime
-					//GStats.Details["ping_total_ms"].Update(float64(totalTestTime))
 					log.Debug("PING RESULT %+v", hcping.Res)
 					log.Debug("PING Exit %s", hcping.Host)
 					msg.RESULT = hcping.Res
@@ -676,19 +660,18 @@ func worker() {
 					log.Info("%s test params %v", hctype, msg.HC.Meta)
 					testStart := makeTimestamp()
 
-					//chanel on which results if any will come from the ping
 					reschan := make(chan map[string]interface{})
 
 					log.Debug("%s spec %v\n", hctype, msg.HC.Meta)
 
-					//return ping struct with proposed config, will fill in default values
 					hchttp, err := dhc4.NewHttp(msg.HC.Meta)
+
+					log.Debug("spec parsed %+v", hchttp)
+
 					if err != nil {
-						//not much we can do without ping obj
 						msg.ERROR = fmt.Sprintf("%s", err)
 						log.Warning("%s", msg.ERROR)
 					} else {
-						//fireaway sett proper request
 						switch hctype {
 						case "HTTP_GET":
 							hchttp.Request = "get"
@@ -706,7 +689,6 @@ func worker() {
 							select {
 							case res := <-reschan:
 								log.Debug("\nHTTP RES: %+v", res)
-								//copy what we got
 								for k, v := range res {
 									hchttp.Res[string(k)] = v
 								}
@@ -722,7 +704,6 @@ func worker() {
 
 					totalTestTime := makeTimestamp() - testStart
 					hchttp.Res["total_ms"] = totalTestTime
-					//GStats.Details[fmt.Sprintf("http_%s_total_ms", hchttp.Request)].Update(float64(totalTestTime))
 					log.Debug("HTTP RESULT %+v", hchttp.Res)
 					log.Debug("HTTP Exit %s", hchttp.Host)
 					msg.RESULT = hchttp.Res
@@ -731,8 +712,6 @@ func worker() {
 					log.Debug("%s test params %v", hctype, msg.HC.Meta)
 					msg.ERROR = fmt.Sprintf("Invalid Test Submitted \"%s\"", msg.HC.HcType)
 				}
-
-				//pack updated message back to json
 
 				Reply, err := nodemsg.Marshal(msg)
 				if err != nil {

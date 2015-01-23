@@ -4,6 +4,7 @@
 package main
 
 import (
+	dhc4 "./dhc4"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -45,6 +46,7 @@ var logFile *os.File
 var logFormat = logging.MustStringFormatter("%{color}%{time:15:04:05.000000} %{shortfunc} ▶ %{level:.4s} %{id:03x}%{color:reset} %{message}")
 var log = logging.MustGetLogger("cleaner")
 var Gloglevel logging.Level = logging.DEBUG
+var Glocation string = dhc4.UNKNOWN
 
 //this where errors go to die
 var err error
@@ -267,6 +269,12 @@ func main() {
 	Gnodeid, ok = cfg.Get("system", "nodeid")
 	if !ok {
 		log.Fatal("'nodeid' missing from 'system' section")
+	}
+
+	//location
+	Glocation, ok = cfg.Get("system", "location")
+	if !ok {
+		log.Fatal("'location' missing from 'system' section")
 	}
 
 	//http server

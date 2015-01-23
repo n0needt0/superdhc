@@ -46,6 +46,7 @@ type Hc struct {
 	HcType    string `json:"hct" bson:"hct"`
 	Ver       string `json:"v" bson:"v"`
 	Meta      map[string]interface{}
+	Updated   int32 `json:"upd" bson:"upd"`
 }
 
 //********NODE MESSAGE******

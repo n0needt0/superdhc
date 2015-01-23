@@ -70,20 +70,11 @@ func (hchttp *HcHttp) loadMeta(meta map[string]interface{}) error {
 
 	hchttp.Timeout = TIMEOUT_SEC
 	if el, ok := meta["timeout"]; ok == true {
-		v := 0
-
-		if _, ok := el.(string); ok {
-			if v, err := strconv.Atoi(el.(string)); err == nil {
-				v = v
-			}
-		}
-
-		if _, ok := el.(int); ok {
+		if v, ok := el.(int); ok {
 			v = el.(int)
-		}
-
-		if v > 2 || v < 10 {
-			hchttp.Timeout = v
+			if v > 2 && v < 11 {
+				hchttp.Timeout = v
+			}
 		}
 	}
 
@@ -147,12 +138,14 @@ func (hchttp *HcHttp) loadMeta(meta map[string]interface{}) error {
 		}
 	}
 	hchttp.OkCode = []string{"200", "206"}
+	hchttp.OkString = ""
+	hchttp.OkHeader = ""
 
 	if el, ok := meta["ok"]; ok == true {
 		//parse interface
 		if el, ok := el.(map[string]interface{}); ok == true {
-			//parse string out of map
-			if el, ok := el["rcode"]; ok == true {
+
+			if el, ok := el["ok_code"]; ok == true {
 				codes := []string{}
 				if _, ok := el.([]int); ok {
 					for _, e := range el.([]int) {
@@ -168,33 +161,20 @@ func (hchttp *HcHttp) loadMeta(meta map[string]interface{}) error {
 					hchttp.OkCode = codes
 				}
 			}
-		}
-	}
 
-	hchttp.OkString = ""
-	if el, ok := meta["ok"]; ok == true {
-		//parse interface
-		if el, ok := el.(map[string]interface{}); ok == true {
-			//parse string out of map
-			if el, ok := el["string"]; ok == true {
+			if el, ok := el["ok_string"]; ok == true {
 				if _, ok := el.(string); ok {
 					hchttp.OkString = el.(string)
 				}
 			}
-		}
-	}
 
-	hchttp.OkHeader = ""
-
-	if el, ok := meta["ok"]; ok == true {
-		//parse interface
-		if el, ok := el.(map[string]interface{}); ok == true {
 			//parse string out of map
-			if el, ok := el["header"]; ok == true {
+			if el, ok := el["ok_header"]; ok == true {
 				if _, ok := el.(string); ok {
 					hchttp.OkHeader = el.(string)
 				}
 			}
+
 		}
 	}
 
@@ -246,7 +226,7 @@ func (hchttp *HcHttp) DoTest(result chan map[string]interface{}) error {
 	testtime := makeTimestamp() - start
 
 	res["http_code"] = response.StatusCode
-	res["nsl_ms"] = testtime / 1000 //convert to msed
+	res["nsl_ms"] = testtime / 1000 //convert to msec
 	res["con_ms"] = res["nsl_ms"]
 	res["tfb_ms"] = res["nsl_ms"]
 	res["tot_ms"] = res["nsl_ms"]

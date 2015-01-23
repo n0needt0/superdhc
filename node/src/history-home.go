@@ -65,24 +65,9 @@ var GStats = struct {
 	sync.RWMutex{},
 }
 
-//generic message
-type Msg struct {
-	SERIAL string
-	TS     int64
-	ERROR  string
-	HC     interface{}
-	RESULT map[string]interface{}
-}
-
 //Helper function to precess requests
-var GetRequest = func(JsonMsg []byte) (Msg, error) {
-	var msg = Msg{
-		SERIAL: "",
-		TS:     0,
-		ERROR:  "",
-		HC:     nil,
-		RESULT: make(map[string]interface{}),
-	}
+var GetRequest = func(JsonMsg []byte) (map[string]interface{}, error) {
+	msg := make(map[string]interface{})
 
 	d := json.NewDecoder(bytes.NewReader(JsonMsg))
 	d.UseNumber()
@@ -92,16 +77,6 @@ var GetRequest = func(JsonMsg []byte) (Msg, error) {
 	}
 
 	return msg, nil
-}
-
-var GetReply = func(msg Msg) ([]byte, error) {
-
-	jsonstr, err := json.Marshal(msg)
-	if err != nil {
-		return []byte("{}"), err
-	}
-
-	return jsonstr, nil
 }
 
 //parse command line
@@ -502,17 +477,6 @@ func worker() {
 				log.Debug("request %+v", msg)
 
 				//TODO do work log to database, ets
-
-				Reply, err := GetReply(msg)
-				if err != nil {
-					log.Warning("GetReply %s", err)
-				}
-
-				log.Debug("reply %+v", msg)
-
-				frames[1] = Reply
-
-				worker.SendMultipart(frames, 0)
 
 				liveness = HEARTBEAT_LIVENESS
 

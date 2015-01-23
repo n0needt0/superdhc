@@ -35,13 +35,13 @@ func NewPing(meta map[string]interface{}) (*HcPing, error) {
 		"",
 		TIMEOUT_SEC,
 		OK_PACKET_LOSS_P,
-		PACKET_CNT,
-		PACKET_SIZE,
+		DEFAULT_PACKET_CNT,
+		DEFAULT_PACKET_SIZE,
 		make(map[string]interface{}),
 	}
 
 	hcping.Res["state"] = HEALTH_STATE_DOWN //it is not working unless noted otherwise
-	hcping.Res["loss_%"] = float64(100)
+	hcping.Res["loss_%"] = float64(0)
 
 	err := hcping.loadMeta(meta)
 	if err != nil {
@@ -65,48 +65,34 @@ func (hcping *HcPing) loadMeta(meta map[string]interface{}) error {
 
 	hcping.Timeout = TIMEOUT_SEC
 	if el, ok := meta["timeout"]; ok == true {
-		v := 0
-
-		if _, ok := el.(string); ok {
-			if v, err := strconv.Atoi(el.(string)); err == nil {
-				v = v
-			}
-		}
-
-		if _, ok := el.(int); ok {
+		if v, ok := el.(int); ok {
 			v = el.(int)
-		}
-
-		if v > 2 || v < 10 {
-			hcping.Timeout = v
+			if v > 2 && v < 11 {
+				hcping.Timeout = v
+			}
 		}
 	}
 
 	//parse value
-	if el, ok := meta["ok"]; ok == true {
-		//parse interface
-		if el, ok := el.(map[string]interface{}); ok == true {
-			//parse string out of map
-			if el, ok := el["ploss"]; ok == true {
-				//parce out a float
-				//type ensure
-				if _, ok := el.(string); ok {
-					if el, ok := el.(string); ok == true {
-						//convert string to float
-						if v, err := strconv.ParseFloat(el, 32); err == nil {
-							v := float32(v)
-							if v < 0 || v > 100 {
-								v = 2.5
-							}
-							hcping.Plossok = v
-						}
+	//parse string out of map
+	if el, ok := meta["ok_ploss"]; ok == true {
+		//parce out a float
+		//type ensure
+		if _, ok := el.(string); ok {
+			if el, ok := el.(string); ok == true {
+				//convert string to float
+				if v, err := strconv.ParseFloat(el, 32); err == nil {
+					v := float32(v)
+					if v < 0 || v > 100 {
+						v = 2.5
 					}
+					hcping.Plossok = v
 				}
 			}
 		}
 	}
 
-	hcping.Packets = 4
+	hcping.Packets = DEFAULT_PACKET_CNT
 	if el, ok := meta["packets"]; ok == true {
 		v := 4
 
@@ -126,16 +112,7 @@ func (hcping *HcPing) loadMeta(meta map[string]interface{}) error {
 
 	}
 
-	if el, ok := meta["size"]; ok == true {
-		if v, err := strconv.Atoi(el.(string)); err == nil {
-			if v < 2 || v > 92 {
-				v = 35
-			}
-			hcping.Size = v
-		}
-	}
-
-	hcping.Size = 35
+	hcping.Size = DEFAULT_PACKET_SIZE
 	if el, ok := meta["size"]; ok == true {
 		v := 0
 

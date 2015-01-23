@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"strconv"
 	"strings"
 )
 
@@ -68,20 +67,11 @@ func (hctcp *HcTcp) loadMeta(meta map[string]interface{}) error {
 
 	hctcp.Timeout = TIMEOUT_SEC
 	if el, ok := meta["timeout"]; ok == true {
-		v := 0
-
-		if _, ok := el.(string); ok {
-			if v, err := strconv.Atoi(el.(string)); err == nil {
-				v = v
-			}
-		}
-
-		if _, ok := el.(int); ok {
+		if v, ok := el.(int); ok {
 			v = el.(int)
-		}
-
-		if v > 2 || v < 10 {
-			hctcp.Timeout = v
+			if v > 2 && v < 11 {
+				hctcp.Timeout = v
+			}
 		}
 	}
 
@@ -122,10 +112,12 @@ func (hctcp *HcTcp) DoTest(result chan map[string]interface{}) error {
 		res["state"] = HEALTH_STATE_DOWN
 		msg := fmt.Sprintf("TCP %s %s:%s failed: %s", hctcp.Proto, hctcp.Host, hctcp.Port, err.Error())
 		log.Warning(msg)
+		res["time_ms"] = makeTimestamp() - dns_start
 		res["msg"] = msg
 		result <- res
 	} else {
 		c.Close()
+		res["time_ms"] = makeTimestamp() - dns_start
 		res["state"] = HEALTH_STATE_UP
 		result <- res
 	}

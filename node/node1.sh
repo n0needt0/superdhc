@@ -31,7 +31,6 @@ sed -i "s/THISNODEID/$NODE/g" /etc/dhc4/cleaner.cfg
 #modify prefered server order
 sed -i 's/MYTARGETS/tcp:\/\/192.168.82.100:6455,tcp:\/\/192.168.82.110:6455,tcp:\/\/192.168.82.120:6455/g' /etc/dhc4/cleaner.cfg
 
-
 #cleaner binary
 cp /vagrant/bin/cleaner /var/dhc4/cleaner
 chmod 777 /var/dhc4/cleaner
@@ -42,6 +41,21 @@ cp /vagrant/etc/monit/conf.d/cleaner /etc/monit/conf.d/
 
 /sbin/stop cleaner
 /sbin/start cleaner
+
+#INSTALL FEEDER
+cp /vagrant/etc/dhc4/feeder.cfg /etc/dhc4/
+sed -i "s/THISNODEID/$NODE/g" /etc/dhc4/feeder.cfg
+
+#feeder binary
+cp /vagrant/bin/feeder /var/dhc4/feeder
+chmod 777 /var/dhc4/feeder
+
+#feeder monit and init files
+cp /vagrant/etc/init/feeder.conf /etc/init/
+cp /vagrant/etc/monit/conf.d/feeder /etc/monit/conf.d/
+
+/sbin/stop feeder
+/sbin/start feeder
 
 #INSTALL dispatch
 #dispatch config

@@ -43,6 +43,21 @@ cp /vagrant/etc/monit/conf.d/cleaner /etc/monit/conf.d/
 /sbin/stop cleaner
 /sbin/start cleaner
 
+#INSTALL FEEDER
+cp /vagrant/etc/dhc4/feeder.cfg /etc/dhc4/
+sed -i "s/THISNODEID/$NODE/g" /etc/dhc4/feeder.cfg
+
+#feeder binary
+cp /vagrant/bin/feeder /var/dhc4/feeder
+chmod 777 /var/dhc4/feeder
+
+#feeder monit and init files
+cp /vagrant/etc/init/feeder.conf /etc/init/
+cp /vagrant/etc/monit/conf.d/feeder /etc/monit/conf.d/
+
+/sbin/stop feeder
+/sbin/start feeder
+
 #INSTALL dispatch
 #dispatch config
 cp /vagrant/etc/dhc4/dispatch.cfg /etc/dhc4/

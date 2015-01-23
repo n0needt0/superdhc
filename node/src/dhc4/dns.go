@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"github.com/miekg/dns"
 	"net"
-	"strconv"
 )
 
 var valid_records = []string{"DNS_A", "DNS_CNAME", "DNS_HINFO", "DNS_MX", "DNS_NS", "DNS_PTR", "DNS_SOA", "DNS_TXT", "DNS_AAAA", "DNS_SRV", "DNS_NAPTR", "DNS_A6", "DNS_ALL", "DNS_ANY"}
@@ -54,20 +53,11 @@ func (hcdns *HcDns) loadMeta(meta map[string]interface{}) error {
 
 	hcdns.Timeout = TIMEOUT_SEC
 	if el, ok := meta["timeout"]; ok == true {
-		v := 0
-
-		if _, ok := el.(string); ok {
-			if v, err := strconv.Atoi(el.(string)); err == nil {
-				v = v
-			}
-		}
-
-		if _, ok := el.(int); ok {
+		if v, ok := el.(int); ok {
 			v = el.(int)
-		}
-
-		if v > 2 || v < 10 {
-			hcdns.Timeout = v
+			if v > 2 && v < 11 {
+				hcdns.Timeout = v
+			}
 		}
 	}
 
@@ -87,9 +77,12 @@ func (hcdns *HcDns) loadMeta(meta map[string]interface{}) error {
 
 func (hcdns *HcDns) DoTest(result chan map[string]interface{}) error {
 
+	time_start := makeTimestamp()
+
 	res := make(map[string]interface{})
 
 	config, _ := dns.ClientConfigFromFile("/etc/resolv.conf")
+
 	c := new(dns.Client)
 
 	m := new(dns.Msg)
@@ -128,6 +121,9 @@ func (hcdns *HcDns) DoTest(result chan map[string]interface{}) error {
 	m.RecursionDesired = true
 
 	r, _, err := c.Exchange(m, net.JoinHostPort(config.Servers[0], config.Port))
+
+	res["time_ms"] = makeTimestamp() - time_start
+
 	if r == nil {
 		res["state"] = HEALTH_STATE_DOWN
 		msg := fmt.Sprintf("DNS %s %s:%s failed: %s", hcdns.Host, hcdns.RecType, err.Error())

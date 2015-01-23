@@ -48,6 +48,7 @@ const (
 	EXPIRECNT_HIST  = 10    //maximum number of history records for given health check id
 	FORCESEC_REPORT = 86400 //report down event if still down and older than
 	ZMQ_RANDOM      = -1
+	DEBUG_JUDGE     = false
 )
 
 //this is log file
@@ -55,6 +56,7 @@ var logFile *os.File
 var logFormat = logging.MustStringFormatter("%{color}%{time:15:04:05.000000} %{shortfunc} ▶ %{level:.4s} %{id:03x}%{color:reset} %{message}")
 var log = logging.MustGetLogger("logfile")
 var Gloglevel logging.Level = logging.DEBUG
+var Glocation string = dhc4.UNKNOWN
 
 //this where errors go to die
 var err error
@@ -279,6 +281,12 @@ func main() {
 	Gnodeid, ok = cfg.Get("system", "nodeid")
 	if !ok {
 		log.Fatal("'nodeid' missing from 'system' section")
+	}
+
+	//LOCATION
+	Glocation, ok = cfg.Get("system", "location")
+	if !ok {
+		log.Fatal("'location' missing from 'system' section")
 	}
 
 	//http server
@@ -715,6 +723,7 @@ func node_client(me int, mongoSession *mgo.Session) {
 				sleepTime = sleepTime + 100
 				log.Debug("Sleep Time %d msec", sleepTime)
 			}
+			time.Sleep(time.Duration(sleepTime) * time.Millisecond)
 			continue //nothing to send
 		}
 
@@ -777,18 +786,43 @@ func node_client(me int, mongoSession *mgo.Session) {
 					log.Debug("OK seq:%s rep:%s", serial, ReplyMsg.SERIAL)
 					//ok reply returned see whats going on with it
 					//but first unlock the locked hc and set next run time along with result snap
-					cronexp, ok := cronexpr.Parse(ReplyMsg.HC.Cron)
+					cronexp, err := cronexpr.Parse(ReplyMsg.HC.Cron)
 
 					now := time.Now()
-					next := now
+					nr := int32(now.Unix() + 60) //worst case run every minute if cron not compiles
 
-					nr := int32(now.Unix() + 300) //worst case run every 5 minutes if cron not compiles
+					if err != nil {
+						log.Warning("error parsing cron %s", err)
+					} else {
+						//lets find a interval in seconds between 2 proposed stamps
+						//this way we know interval difference and if next run is sooner than this difference
+						//we make sure to set it to run on Now + diff
+						log.Debug("CRON spec %s", ReplyMsg.HC.Cron)
+						nextN := cronexp.NextN(now, 2)
 
-					if ok == nil {
-						next = cronexp.Next(now)
-						//add few random seconds to spread load
-						rand.Seed(time.Now().UnixNano())
-						nr = int32(next.Unix()) + int32(rand.Intn(30))
+						log.Debug("CRON next 2 %+v", nextN)
+
+						diffSec := int32(nextN[1].Unix()) - int32(nextN[0].Unix())
+
+						//now here the catch. running in sub one minute intervalas that result in
+						//60%diffSec != 0 will break this system, as starting minute with 0 second always included and thus
+						//may result in smaller than intended intervals, example
+						//*/59 is not every 59th second, it is 0 and 59 second and then again 0. making difference only 1 second.
+
+						if diffSec < dhc4.ONE_MINUTE_SEC {
+							switch diffSec {
+							case dhc4.SEC_10, dhc4.SEC_15, dhc4.SEC_30:
+							default:
+								log.Debug("next test is too soon falling back to default %s", dhc4.ONE_MINUTE_SEC)
+								diffSec = dhc4.ONE_MINUTE_SEC
+							}
+						}
+
+						log.Debug("CRON diff %d", diffSec)
+						//next run now adds minimum number of seconds for next run
+						//this is don so fast running tests on slow resources dont kill us
+
+						nr = int32(now.Unix()) + diffSec
 					}
 
 					log.Debug("setting next run in: %d sec per cron: %s", nr-int32(now.Unix()), ReplyMsg.HC.Cron)
@@ -827,10 +861,23 @@ func node_client(me int, mongoSession *mgo.Session) {
 					//just pass it on
 					log.Debug("HISTORY LOG %+v", ReplyMsg)
 
-					//let history servers take it apart
-					err = history_client.Send(reply, 0)
-					if err != nil {
-						log.Debug("HISTORY ERR %+v", err)
+					hist_msg := make(map[string]interface{})
+
+					hist_msg["health_check_location"] = Glocation
+					hist_msg["healthcheck_id"] = ReplyMsg.HC.Hcid
+					hist_msg["health_test_class"] = ReplyMsg.HC.HcType
+					hist_msg["health_stats"] = ReplyMsg.RESULT
+					hist_msg["sender"] = Gnodeid
+					hist_msg["message_id"] = ReplyMsg.SERIAL
+
+					//now pack it and send it
+					jsonstr, err := json.Marshal(hist_msg)
+					if err == nil {
+						//let history servers take it apart
+						err = history_client.Send(jsonstr, 0)
+						if err != nil {
+							log.Debug("HISTORY ERR %+v", err)
+						}
 					}
 
 					result := &dhc4.HcResult{
@@ -854,7 +901,7 @@ func node_client(me int, mongoSession *mgo.Session) {
 
 					query = bson.M{"hcid": ReplyMsg.HC.Hcid}
 
-					err = hist_conn.Find(query).Sort("-timestamp").All(&results)
+					err = hist_conn.Find(query).Sort("-createdAt").All(&results)
 					if err != nil {
 						log.Debug("Query res %v, %s, %v", info, err, query)
 					}
@@ -884,21 +931,22 @@ func node_client(me int, mongoSession *mgo.Session) {
 					teststr := ""
 
 					for k, v := range results {
+						log.Debug("JUDGE %s TESTSTR %s", v.Hcid, teststr)
 
-						//we have enough to fire event
 						if v.Result == true && !rlock {
+
 							teststr = fmt.Sprintf("%s%s", teststr, "1")
 							up++
 							if down > 0 {
 								flapping = true
 								rlock = true
 								teststr = fmt.Sprintf("%s%s", teststr, "F")
-								log.Debug("EVAL flopping up %s", v.Hcid)
+								log.Debug("JUDGE EVAL flopping up %s", v.Hcid)
 							}
 							if up > tup {
 								rlock = true
 								teststr = fmt.Sprintf("%s%s", teststr, "U")
-								log.Debug("EVAL enough up %s", v.Hcid)
+								log.Debug("JUDGE EVAL enough up %s", v.Hcid)
 							}
 						} else if v.Result == false && !rlock {
 							teststr = fmt.Sprintf("%s%s", teststr, "0")
@@ -907,12 +955,12 @@ func node_client(me int, mongoSession *mgo.Session) {
 								flapping = true
 								rlock = true
 								teststr = fmt.Sprintf("%s%s", teststr, "F")
-								log.Debug("EVAL flopping down %s", v.Hcid)
+								log.Debug("JUDGE EVAL flopping down %s", v.Hcid)
 							}
 							if down > tdown {
 								rlock = true
 								teststr = fmt.Sprintf("%s%s", teststr, "D")
-								log.Debug("EVAL enough down %s", v.Hcid)
+								log.Debug("JUDGE EVAL enough down %s", v.Hcid)
 							}
 						} else {
 							if v.Result == true {
@@ -923,20 +971,23 @@ func node_client(me int, mongoSession *mgo.Session) {
 						}
 
 						//remove old records
+						//TODO
+						//build a separate trimmer
+						//as we can exit from above loop sooner
 						if k > EXPIRECNT_HIST {
-							log.Debug("CLEAN max cnt %d id %s", k, v.ID.String())
+							log.Debug("JUDGE CLEAN max cnt %d id %s", k, v.ID.String())
 
 							err = hist_conn.RemoveId(v.ID)
 							if err != nil {
-								log.Warning("CLEAN Can't remove %+v", v.ID.String())
+								log.Warning("JUDGE CLEAN Can't remove %+v", v.ID.String())
 							}
 						}
 					}
 
-					log.Debug("JUDGE %s (up:%d tup:%d), (dn:%d, tdn:%d)", teststr, up, tup, down, tdown)
+					log.Debug("JUDGE %s %s (up:%d tup:%d), (dn:%d, tdn:%d)", ReplyMsg.HC.Hcid, teststr, up, tup, down, tdown)
 
 					if flapping {
-						log.Debug("JUDGE NO flapping %s", ReplyMsg.HC.Hcid)
+						log.Debug("JUDGE NO resource flapping %s", ReplyMsg.HC.Hcid)
 					} else {
 						if up > 0 && up < tup {
 							log.Debug("JUDGE NO %s report up, not enough samples have: %d, need %d ", ReplyMsg.HC.Hcid, up, tup)
@@ -991,7 +1042,7 @@ func node_client(me int, mongoSession *mgo.Session) {
 							log.Notice("JUDGE DO down %s, over %d sec, was %t, now: %t", ReplyMsg.HC.Hcid, FORCESEC_REPORT, eventresult.Result, state)
 							judgedo = true
 						} else {
-							log.Notice("JUDGE NO change %s", ReplyMsg.HC.Hcid)
+							log.Notice("JUDGE NO nochange %s", ReplyMsg.HC.Hcid)
 						}
 
 						if judgedo {
