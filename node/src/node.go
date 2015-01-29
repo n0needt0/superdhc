@@ -584,7 +584,7 @@ func worker() {
 
 					if err != nil {
 						msg.ERROR = fmt.Sprintf("%s", err)
-						log.Warning("%s", msg.ERROR)
+						log.Warning("TCP: %s", msg.ERROR)
 					} else {
 						go hctcp.DoTest(reschan)
 
@@ -599,7 +599,7 @@ func worker() {
 								}
 								testing = false
 							case <-time.After(time.Duration(hctcp.Timeout) * time.Second):
-								msg := fmt.Sprintf("TCP: %s %s:%s timeout %d sec", hctcp.Proto, hctcp.Host, hctcp.Port, hctcp.Timeout)
+								msg := fmt.Sprintf("TCP error: timeout exeeded %ds, proto: %s, host: %s, port: %s ", hctcp.Timeout, hctcp.Proto, hctcp.Host, hctcp.Port)
 								log.Warning(msg)
 								hctcp.Res["msg"] = msg
 								testing = false
@@ -712,6 +712,9 @@ func worker() {
 					log.Debug("%s test params %v", hctype, msg.HC.Meta)
 					msg.ERROR = fmt.Sprintf("Invalid Test Submitted \"%s\"", msg.HC.HcType)
 				}
+
+				//set check time
+				msg.RESULT["checked"] = fmt.Sprintf("%d", time.Now().Unix())
 
 				Reply, err := nodemsg.Marshal(msg)
 				if err != nil {

@@ -154,7 +154,7 @@ func (hcping *HcPing) DoTest(result chan map[string]interface{}) error {
 
 	IpAddr, err := net.ResolveIPAddr(netProto, hcping.Host)
 	if err != nil {
-		res["msg"] = fmt.Sprintf("PING:DNS: %s", err)
+		res["msg"] = fmt.Sprintf("PING error: %s", err)
 		result <- res
 		return nil
 	}
@@ -207,7 +207,7 @@ loop:
 			}
 		case <-p.Done():
 			if err := p.Err(); err != nil {
-				msg := fmt.Sprintf("PING failed: %s", err)
+				msg := fmt.Sprintf("PING host: %s error: %s", hcping.Host, err)
 				log.Warning(msg)
 				res["msg"] = msg
 			}
@@ -224,7 +224,7 @@ loop:
 	if loss < hcping.Plossok {
 		res["state"] = HEALTH_STATE_UP
 	} else {
-		res["msg"] = fmt.Sprintf("%f%% packet loss", loss)
+		res["msg"] = fmt.Sprintf("PING error: host %s, packet loss %3.f%% max", hcping.Host, loss)
 	}
 
 	res["rt_min"] = rt_stats.Min()

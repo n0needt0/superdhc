@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	zmq "github.com/alecthomas/gozmq"
+	"github.com/garyburd/redigo/redis"
 	"github.com/gorilla/pat"
 	logging "github.com/op/go-logging"
 	"github.com/paulbellamy/ratecounter"
@@ -40,6 +41,7 @@ var logFormat = logging.MustStringFormatter("%{color}%{time:15:04:05.000000} %{s
 var log = logging.MustGetLogger("logfile")
 var Gloglevel logging.Level = logging.DEBUG
 var Gdebugdelay bool = false
+var Grpool *redis.Pool
 
 //this where errors go to die
 var err error
@@ -50,7 +52,7 @@ var help *bool = flag.Bool("help", false, "Show options")
 var cfg ini.File
 
 //uris for front facing and back facing connections
-var Gbackuri, Gfronturi string
+var Gbackuri, Gfronturi, Gredis string
 
 //Stats structure
 var GStats = struct {
@@ -85,6 +87,25 @@ func init() {
 	if *help {
 		flag.PrintDefaults()
 		os.Exit(1)
+	}
+}
+
+//Redis pool func
+func newPool(server string) *redis.Pool {
+	return &redis.Pool{
+		MaxIdle:     3,
+		IdleTimeout: 240 * time.Second,
+		Dial: func() (redis.Conn, error) {
+			c, err := redis.Dial("tcp", server)
+			if err != nil {
+				return nil, err
+			}
+			return c, err
+		},
+		TestOnBorrow: func(c redis.Conn, t time.Time) error {
+			_, err := c.Do("PING")
+			return err
+		},
 	}
 }
 
@@ -254,6 +275,11 @@ func main() {
 		log.Fatalf("'fronturi' uri string missing from 'zmq' section")
 	}
 
+	Gredis, ok = cfg.Get("redis", "server")
+	if !ok {
+		log.Fatalf("'server' missing from 'redis' section")
+	}
+
 	Gbackuri, ok = cfg.Get("zmq", "backuri")
 	if !ok {
 		log.Fatalf("'backuri' missing from 'zmq' section")
@@ -340,6 +366,8 @@ func main() {
 		//prestart
 		workers := NewWorkerQueue()
 		heartbeatAt := time.Now().Add(HEARTBEAT_INTERVAL)
+
+		Grpool = newPool(Gredis)
 
 		go func() {
 			for {
@@ -436,8 +464,52 @@ func main() {
 //  the heartbeating, which lets the worker detect if the queue has
 //  died, and vice-versa:
 
-func worker() {
+func insert(message_id string, healthcheck_id string, health_check_location string, health_test_class string, stats_array map[string]interface{}) error {
+	rconn := Grpool.Get()
+	defer rconn.Close()
 
+	score := ""
+
+	v, ok := stats_array["checked"]
+	if !ok {
+		//in case its missing
+		score = fmt.Sprintf("%d", time.Now().Unix())
+	} else {
+		score, ok = v.(string)
+		if !ok {
+			//in case its missing
+			score = fmt.Sprintf("%d", time.Now().Unix())
+		}
+	}
+
+	//check last char of a timestamp, some how redis dont like trailing zeroes
+	if score[:len(score)-1] == "0" {
+		score = fmt.Sprintf("%s%s", score[:len(score)-1], "1")
+	}
+
+	zkey := strings.ToUpper(fmt.Sprintf("%s:%s:%s", healthcheck_id, health_test_class, health_check_location))
+
+	zval, err := json.Marshal(stats_array)
+	if err != nil {
+		return err
+	}
+
+	log.Debug("inserting %s %s %s", score, zkey, zval)
+
+	_, err = rconn.Do("ZADD", zkey, score, zval)
+	if err != nil {
+		return err
+	}
+
+	err = rconn.Flush()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func worker() {
 	context, err := zmq.NewContext()
 	if err != nil {
 		log.Warning("starting workers context %s", err)
@@ -474,9 +546,59 @@ func worker() {
 					log.Warning("GetRequest %s", err)
 				}
 
-				log.Debug("request %+v", msg)
+				//test for data parts
+				goodkeys := []string{"sender", "message_id", "health_check_location", "healthcheck_id", "health_test_class", "health_stats"}
+				keysok := true
 
-				//TODO do work log to database, ets
+				for _, key := range goodkeys {
+					_, ok := msg[key]
+					if !ok {
+						log.Warning("missing %s in message %+v", key, msg)
+						keysok = false
+						break
+					}
+				}
+
+				if !keysok {
+					continue
+				}
+
+				message_id, ok := msg["message_id"].(string)
+				if !ok {
+					log.Warning("bad message id %+v", msg["message_id"])
+					continue
+				}
+
+				healthcheck_id, ok := msg["healthcheck_id"].(string)
+				if !ok {
+					log.Warning("bad healthcheck_id %+v", msg["healthcheck_id"])
+					continue
+				}
+
+				health_check_location, ok := msg["health_check_location"].(string)
+				if !ok {
+					log.Warning("bad health_check_location %+v", msg["health_check_location"])
+					continue
+				}
+
+				health_test_class, ok := msg["health_test_class"].(string)
+				if !ok {
+					log.Warning("bad health_test_class %+v", msg["health_test_class"])
+					continue
+				}
+
+				health_stats, ok := msg["health_stats"].(map[string]interface{})
+				if !ok {
+					log.Warning("bad health_stats %+v", msg["health_stats"])
+					continue
+				}
+
+				err = insert(message_id, healthcheck_id, health_check_location, health_test_class, health_stats)
+				if err != nil {
+					log.Warning("REDIS error inserting %s : %s", message_id, err)
+				} else {
+					log.Debug("REDIS inserted %s", message_id)
+				}
 
 				liveness = HEARTBEAT_LIVENESS
 

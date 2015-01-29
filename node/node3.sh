@@ -28,8 +28,6 @@ cp /vagrant/etc/logrotate.d/dhc4  /etc/logrotate.d/
 cp /vagrant/etc/dhc4/cleaner.cfg /etc/dhc4/
 sed -i "s/THISNODEID/$NODE/g" /etc/dhc4/cleaner.cfg
 
-sed -i 's/MYTARGETS/tcp:\/\/192.168.82.120:6455,tcp:\/\/192.168.82.110:6455,tcp:\/\/192.168.82.100:6455/g' /etc/dhc4/cleaner.cfg
-
 #cleaner binary
 cp /vagrant/bin/cleaner /var/dhc4/cleaner
 chmod 777 /var/dhc4/cleaner
@@ -103,11 +101,11 @@ sed -i "s/THISNODEID/$NODE/g" /etc/ganglia/gmond.conf
 
 /etc/init.d/ganglia-monitor restart
 
-mongo --host 192.168.42.100 << 'EOF'
+mongo --host 192.168.82.200 << 'EOF'
 config = { _id: "rs0", members:[
-          { _id : 0, host : "192.168.42.100:27017"},
-          { _id : 1, host : "192.168.42.110:27017"},
-          { _id : 2, host : "192.168.42.120:27017"} ]
+          { _id : 0, host : "192.168.82.200:27017"},
+          { _id : 1, host : "192.168.82.210:27017"},
+          { _id : 2, host : "192.168.82.220:27017"} ]
          };
 rs.initiate(config);
 
@@ -122,7 +120,7 @@ echo "sleeping  30sec for mongo to catchup"
 
 sleep 30
 
-mongo --host 192.168.42.100 << 'EOF'
+mongo --host 192.168.82.200 << 'EOF'
 
 rs.status();
 

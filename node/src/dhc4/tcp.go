@@ -43,17 +43,17 @@ func (hctcp *HcTcp) loadMeta(meta map[string]interface{}) error {
 	if el, ok := meta["host"]; ok {
 		if _, ok := el.(string); ok {
 			v := el.(string)
-			hctcp.Host = v
+			hctcp.Host = strings.Trim(v, " ")
 		} else {
-			return errors.New("TCP: Invalid host value")
+			return errors.New("Invalid host value")
 		}
 	} else {
-		return errors.New("TCP: Invalid host value")
+		return errors.New("Invalid host value")
 	}
 
 	if el, ok := meta["port"]; !ok {
 		//no host fail
-		return errors.New("TCP: Invalid port value")
+		return errors.New("Invalid port value")
 	} else {
 		v := ""
 		if _, ok := el.(string); ok {
@@ -62,7 +62,7 @@ func (hctcp *HcTcp) loadMeta(meta map[string]interface{}) error {
 		if _, ok := el.(int); ok {
 			v = fmt.Sprintf("%d", el.(int))
 		}
-		hctcp.Port = v
+		hctcp.Port = strings.Trim(v, " ")
 	}
 
 	hctcp.Timeout = TIMEOUT_SEC
@@ -78,11 +78,9 @@ func (hctcp *HcTcp) loadMeta(meta map[string]interface{}) error {
 	if el, ok := meta["proto"]; ok == true {
 		if _, ok := el.(string); ok {
 			v := el.(string)
-			hctcp.Proto = v
-		}
-	} else {
-		if strings.Index(hctcp.Host, ":") != -1 {
-			hctcp.Proto = "tcp6"
+			if validateNet(v) {
+				hctcp.Proto = v
+			}
 		}
 	}
 
@@ -99,7 +97,7 @@ func (hctcp *HcTcp) DoTest(result chan map[string]interface{}) error {
 
 	TCPAddr, err := net.ResolveTCPAddr(hctcp.Proto, fmt.Sprintf("%s:%s", hctcp.Host, hctcp.Port))
 	if err != nil {
-		res["msg"] = fmt.Sprintf("TCP:DNS: %s", err)
+		res["msg"] = fmt.Sprintf("TCP error DNS: %s, proto: %s, host: %s, port: %s", err, hctcp.Proto, hctcp.Host, hctcp.Port)
 		result <- res
 		return nil
 	}
@@ -110,7 +108,7 @@ func (hctcp *HcTcp) DoTest(result chan map[string]interface{}) error {
 	c, err := net.DialTCP(hctcp.Proto, nil, TCPAddr)
 	if err != nil {
 		res["state"] = HEALTH_STATE_DOWN
-		msg := fmt.Sprintf("TCP %s %s:%s failed: %s", hctcp.Proto, hctcp.Host, hctcp.Port, err.Error())
+		msg := fmt.Sprintf("TCP error: %s, proto: %s, host: %s, port: %s", err.Error(), hctcp.Proto, hctcp.Host, hctcp.Port)
 		log.Warning(msg)
 		res["time_ms"] = makeTimestamp() - dns_start
 		res["msg"] = msg

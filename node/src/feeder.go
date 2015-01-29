@@ -608,18 +608,18 @@ func clean_dns(config map[string]interface{}, meta map[string]interface{}) map[s
 }
 
 func clean_tcp(config map[string]interface{}, meta map[string]interface{}) map[string]interface{} {
-	v := "80"
+
 	if el, ok := config["port"]; ok {
+
 		if _, ok := el.(string); ok {
-			v = el.(string)
+			meta["port"] = el.(string)
 		}
 		if _, ok := el.(int); ok {
-			v = fmt.Sprintf("%d", el.(int))
+			meta["port"] = fmt.Sprintf("%d", el.(int))
 		}
 	}
-	meta["port"] = v
 
-	v = "tcp6"
+	v := "tcp"
 	if el, ok := config["proto"]; ok {
 		if _, ok := el.(string); ok {
 			v = el.(string)
@@ -656,7 +656,7 @@ func clean_ping(config map[string]interface{}, meta map[string]interface{}) map[
 }
 
 func clean_http(config map[string]interface{}, meta map[string]interface{}) map[string]interface{} {
-	meta["port"] = "80"
+
 	if el, ok := config["port"]; ok {
 		if _, ok := el.(string); ok {
 			meta["port"] = el.(string)

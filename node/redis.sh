@@ -29,16 +29,22 @@ cp -r /vagrant/DHC3 /var
 #install log rotate
 cp /vagrant/etc/logrotate.d/dhc4  /etc/logrotate.d/
 
+#install monit scripts for redis
+cp /vagrant/etc/monit/conf.d/redis /etc/monit/conf.d/
+
 cp /vagrant/etc/ganglia/gmond_node.conf /etc/ganglia/gmond.conf
 sed -i "s/THISNODEID/$NODE/g" /etc/ganglia/gmond.conf
 
 #install MongoDb Ganglia Support
  mkdir /usr/lib/ganglia/python_modules
 
- cp /vagrant/usr/lib/ganglia/python_modules/*  /usr/lib/ganglia/python_modules/
+ cp /vagrant/usr/lib/ganglia/python_modules/redis-gmond.py /usr/lib/ganglia/python_modules/
 
  mkdir /etc/ganglia/conf.d
  cp /vagrant/etc/ganglia/conf.d/* /etc/ganglia/conf.d/
+
+#by default redis only listens on 127.0.0.1
+sed -i "s/bind 127.0.0.1/#bind 127.0.0.1/g" /etc/redis/redis.conf
 
 service redis-server restart
 

@@ -126,7 +126,7 @@ func (hcdns *HcDns) DoTest(result chan map[string]interface{}) error {
 
 	if r == nil {
 		res["state"] = HEALTH_STATE_DOWN
-		msg := fmt.Sprintf("DNS %s %s:%s failed: %s", hcdns.Host, hcdns.RecType, err.Error())
+		msg := fmt.Sprintf("DNS error: %s", err.Error())
 		log.Warning(msg)
 		res["msg"] = msg
 		result <- res
@@ -135,7 +135,7 @@ func (hcdns *HcDns) DoTest(result chan map[string]interface{}) error {
 
 	if r.Rcode != dns.RcodeSuccess {
 		res["state"] = HEALTH_STATE_DOWN
-		msg := fmt.Sprintf("DNS %s %s invalid answer ", hcdns.Host, hcdns.RecType)
+		msg := fmt.Sprintf("DNS error %s %s invalid answer ", hcdns.Host, hcdns.RecType)
 		log.Warning(msg)
 		res["msg"] = msg
 		result <- res
@@ -160,7 +160,7 @@ func (hcdns *HcDns) DoTest(result chan map[string]interface{}) error {
 	//if we here obviuously nothing returned :()
 
 	res["state"] = HEALTH_STATE_DOWN
-	msg := fmt.Sprintf("DNS %s %s invalid answer ", hcdns.Host, hcdns.RecType)
+	msg := fmt.Sprintf("DNS error %s %s invalid answer ", hcdns.Host, hcdns.RecType)
 	log.Warning(msg)
 	res["msg"] = msg
 	result <- res

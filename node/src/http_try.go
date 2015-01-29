@@ -30,45 +30,47 @@ import (
 
 func main() {
 	t := map[string]interface{}{}
+	t["get_URL_ok"] = map[string]interface{}{"request": "get", "host": "w203.99.71.114", "timeout": 100, "port": 80, "proto": "https", "url": "/owa/healthcheck.htm", "ok": map[string]interface{}{"rcode": []int{200, 206}}}
+
 	t["get_by_code_ok"] = map[string]interface{}{"request": "get", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/get", "ok": map[string]interface{}{"rcode": []int{200, 206}}}
+	/*
+		t["get_by_code_fail"] = map[string]interface{}{"request": "get", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/get", "ok": map[string]interface{}{"rcode": []int{2001}}}
+		t["get_by_string_ok"] = map[string]interface{}{"request": "get", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/get?musikpusi", "ok": map[string]interface{}{"rcode": []int{200, 206}, "string": "musikpusi"}}
+		t["get_by_string_fail"] = map[string]interface{}{"request": "get", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/get", "ok": map[string]interface{}{"rcode": []int{200, 206}, "string": "musikpusi!"}}
+		t["get_by_header_ok"] = map[string]interface{}{"request": "get", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/get", "ok": map[string]interface{}{"rcode": []int{200, 206}, "header": "Content-Type: application/json"}}
+		t["get_by_header_fail"] = map[string]interface{}{"request": "get", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/get", "ok": map[string]interface{}{"rcode": []int{200, 206}, "header": "mus1kpus1k"}}
 
-	t["get_by_code_fail"] = map[string]interface{}{"request": "get", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/get", "ok": map[string]interface{}{"rcode": []int{2001}}}
-	t["get_by_string_ok"] = map[string]interface{}{"request": "get", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/get?musikpusi", "ok": map[string]interface{}{"rcode": []int{200, 206}, "string": "musikpusi"}}
-	t["get_by_string_fail"] = map[string]interface{}{"request": "get", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/get", "ok": map[string]interface{}{"rcode": []int{200, 206}, "string": "musikpusi!"}}
-	t["get_by_header_ok"] = map[string]interface{}{"request": "get", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/get", "ok": map[string]interface{}{"rcode": []int{200, 206}, "header": "Content-Type: application/json"}}
-	t["get_by_header_fail"] = map[string]interface{}{"request": "get", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/get", "ok": map[string]interface{}{"rcode": []int{200, 206}, "header": "mus1kpus1k"}}
+		t["get_ssl_by_code_ok"] = map[string]interface{}{"request": "get", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/get", "ok": map[string]interface{}{"rcode": []int{200, 206}}}
+		t["get_ssl_by_code_fail"] = map[string]interface{}{"request": "get", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/get", "ok": map[string]interface{}{"rcode": []int{2001}}}
+		t["get_ssl_by_string_ok"] = map[string]interface{}{"request": "get", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/get?musikpusi", "ok": map[string]interface{}{"rcode": []int{200, 206}, "string": "musikpusi"}}
+		t["get_ssl_by_string_fail"] = map[string]interface{}{"request": "get", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/get", "ok": map[string]interface{}{"rcode": []int{200, 206}, "string": "musikpusi!"}}
+		t["get_ssl_by_header_ok"] = map[string]interface{}{"request": "get", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/get", "ok": map[string]interface{}{"rcode": []int{200, 206}, "header": "Content-Type: application/json"}}
+		t["get_ssl_by_header_fail"] = map[string]interface{}{"request": "get", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/get", "ok": map[string]interface{}{"rcode": []int{200, 206}, "header": "mus1kpus1k"}}
 
-	t["get_ssl_by_code_ok"] = map[string]interface{}{"request": "get", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/get", "ok": map[string]interface{}{"rcode": []int{200, 206}}}
-	t["get_ssl_by_code_fail"] = map[string]interface{}{"request": "get", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/get", "ok": map[string]interface{}{"rcode": []int{2001}}}
-	t["get_ssl_by_string_ok"] = map[string]interface{}{"request": "get", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/get?musikpusi", "ok": map[string]interface{}{"rcode": []int{200, 206}, "string": "musikpusi"}}
-	t["get_ssl_by_string_fail"] = map[string]interface{}{"request": "get", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/get", "ok": map[string]interface{}{"rcode": []int{200, 206}, "string": "musikpusi!"}}
-	t["get_ssl_by_header_ok"] = map[string]interface{}{"request": "get", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/get", "ok": map[string]interface{}{"rcode": []int{200, 206}, "header": "Content-Type: application/json"}}
-	t["get_ssl_by_header_fail"] = map[string]interface{}{"request": "get", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/get", "ok": map[string]interface{}{"rcode": []int{200, 206}, "header": "mus1kpus1k"}}
+		t["head_by_code_ok"] = map[string]interface{}{"request": "head", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/headers", "ok": map[string]interface{}{"rcode": []int{200, 206}}}
+		t["head_by_code_fail"] = map[string]interface{}{"request": "head", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/headers", "ok": map[string]interface{}{"rcode": []int{2001}}}
+		t["head_by_header_ok"] = map[string]interface{}{"request": "head", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/headers", "ok": map[string]interface{}{"rcode": []int{200, 206}, "header": "Content-Type: application/json"}}
+		t["head_by_header_fail"] = map[string]interface{}{"request": "head", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/headers", "ok": map[string]interface{}{"rcode": []int{200, 206}, "header": "mus1kpus1k"}}
 
-	t["head_by_code_ok"] = map[string]interface{}{"request": "head", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/headers", "ok": map[string]interface{}{"rcode": []int{200, 206}}}
-	t["head_by_code_fail"] = map[string]interface{}{"request": "head", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/headers", "ok": map[string]interface{}{"rcode": []int{2001}}}
-	t["head_by_header_ok"] = map[string]interface{}{"request": "head", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/headers", "ok": map[string]interface{}{"rcode": []int{200, 206}, "header": "Content-Type: application/json"}}
-	t["head_by_header_fail"] = map[string]interface{}{"request": "head", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/headers", "ok": map[string]interface{}{"rcode": []int{200, 206}, "header": "mus1kpus1k"}}
+		t["head_ssl_by_code_ok"] = map[string]interface{}{"request": "head", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/headers", "ok": map[string]interface{}{"rcode": []int{200, 206}}}
+		t["head_ssl_by_code_fail"] = map[string]interface{}{"request": "head", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/headers", "ok": map[string]interface{}{"rcode": []int{2001}}}
+		t["head_ssl_by_header_ok"] = map[string]interface{}{"request": "head", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/headers", "ok": map[string]interface{}{"rcode": []int{200, 206}, "header": "Content-Type: application/json"}}
+		t["head_ssl_by_header_fail"] = map[string]interface{}{"request": "head", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/headers", "ok": map[string]interface{}{"rcode": []int{200, 206}, "header": "mus1kpus1k"}}
 
-	t["head_ssl_by_code_ok"] = map[string]interface{}{"request": "head", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/headers", "ok": map[string]interface{}{"rcode": []int{200, 206}}}
-	t["head_ssl_by_code_fail"] = map[string]interface{}{"request": "head", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/headers", "ok": map[string]interface{}{"rcode": []int{2001}}}
-	t["head_ssl_by_header_ok"] = map[string]interface{}{"request": "head", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/headers", "ok": map[string]interface{}{"rcode": []int{200, 206}, "header": "Content-Type: application/json"}}
-	t["head_ssl_by_header_fail"] = map[string]interface{}{"request": "head", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/headers", "ok": map[string]interface{}{"rcode": []int{200, 206}, "header": "mus1kpus1k"}}
+		t["post_by_code_ok"] = map[string]interface{}{"request": "post", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/post", "ok": map[string]interface{}{"rcode": []int{200, 206}}}
+		t["post_by_code_fail"] = map[string]interface{}{"request": "post", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/post", "ok": map[string]interface{}{"rcode": []int{2001}}}
+		t["post_by_string_ok"] = map[string]interface{}{"request": "post", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/post", "ok": map[string]interface{}{"rcode": []int{200, 206}, "string": "test=test"}}
+		t["post_by_string_fail"] = map[string]interface{}{"request": "post", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/post", "ok": map[string]interface{}{"rcode": []int{200, 206}, "string": "musikpusi!"}}
+		t["post_by_header_ok"] = map[string]interface{}{"request": "post", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/post", "ok": map[string]interface{}{"rcode": []int{200, 206}, "header": "Content-Type: application/json"}}
+		t["post_by_header_fail"] = map[string]interface{}{"request": "post", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/post", "ok": map[string]interface{}{"rcode": []int{200, 206}, "header": "mus1kpus1k"}}
 
-	t["post_by_code_ok"] = map[string]interface{}{"request": "post", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/post", "ok": map[string]interface{}{"rcode": []int{200, 206}}}
-	t["post_by_code_fail"] = map[string]interface{}{"request": "post", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/post", "ok": map[string]interface{}{"rcode": []int{2001}}}
-	t["post_by_string_ok"] = map[string]interface{}{"request": "post", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/post", "ok": map[string]interface{}{"rcode": []int{200, 206}, "string": "test=test"}}
-	t["post_by_string_fail"] = map[string]interface{}{"request": "post", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/post", "ok": map[string]interface{}{"rcode": []int{200, 206}, "string": "musikpusi!"}}
-	t["post_by_header_ok"] = map[string]interface{}{"request": "post", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/post", "ok": map[string]interface{}{"rcode": []int{200, 206}, "header": "Content-Type: application/json"}}
-	t["post_by_header_fail"] = map[string]interface{}{"request": "post", "host": "httpbin.org", "timeout": 10, "port": 80, "proto": "http", "url": "/post", "ok": map[string]interface{}{"rcode": []int{200, 206}, "header": "mus1kpus1k"}}
-
-	t["post_ssl_by_code_ok"] = map[string]interface{}{"request": "post", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/post", "ok": map[string]interface{}{"rcode": []int{200, 206}}}
-	t["post_ssl_by_code_fail"] = map[string]interface{}{"request": "post", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/post", "ok": map[string]interface{}{"rcode": []int{2001}}}
-	t["post_ssl_by_string_ok"] = map[string]interface{}{"request": "post", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/post", "ok": map[string]interface{}{"rcode": []int{200, 206}, "string": "test=test"}}
-	t["post_ssl_by_string_fail"] = map[string]interface{}{"request": "post", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/post", "ok": map[string]interface{}{"rcode": []int{200, 206}, "string": "musikpusi!"}}
-	t["post_ssl_by_header_ok"] = map[string]interface{}{"request": "post", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/post", "ok": map[string]interface{}{"rcode": []int{200, 206}, "header": "Content-Type: application/json"}}
-	t["post_ssl_by_header_fail"] = map[string]interface{}{"request": "post", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/post", "ok": map[string]interface{}{"rcode": []int{200, 206}, "header": "mus1kpus1k"}}
-
+		t["post_ssl_by_code_ok"] = map[string]interface{}{"request": "post", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/post", "ok": map[string]interface{}{"rcode": []int{200, 206}}}
+		t["post_ssl_by_code_fail"] = map[string]interface{}{"request": "post", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/post", "ok": map[string]interface{}{"rcode": []int{2001}}}
+		t["post_ssl_by_string_ok"] = map[string]interface{}{"request": "post", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/post", "ok": map[string]interface{}{"rcode": []int{200, 206}, "string": "test=test"}}
+		t["post_ssl_by_string_fail"] = map[string]interface{}{"request": "post", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/post", "ok": map[string]interface{}{"rcode": []int{200, 206}, "string": "musikpusi!"}}
+		t["post_ssl_by_header_ok"] = map[string]interface{}{"request": "post", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/post", "ok": map[string]interface{}{"rcode": []int{200, 206}, "header": "Content-Type: application/json"}}
+		t["post_ssl_by_header_fail"] = map[string]interface{}{"request": "post", "host": "httpbin.org", "timeout": 10, "port": 443, "proto": "https", "url": "/post", "ok": map[string]interface{}{"rcode": []int{200, 206}, "header": "mus1kpus1k"}}
+	*/
 	//https get
 	//t["getsec"] = map[string]interface{}{"request": "get", "host": "www.google.com", "timeout": 10, "port": 443, "proto": "https", "url": "/", "ok": map[string]interface{}{"rcode": []int{200, 206}}}
 
@@ -92,7 +94,7 @@ func main() {
 				//fmt.Printf("\n\n%+v\n\n", meta)
 				pass := "fail"
 				for i, v := range res {
-					//					fmt.Printf("HTTP RES: %+v, %+v\n", i, v)
+					//fmt.Printf("HTTP RES: %+v, %+v\n", i, v)
 					if i == "state" && v.(int) == 1 {
 
 						if strings.Contains(test, "_ok") {

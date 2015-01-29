@@ -5,9 +5,9 @@
 package dhc4
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
-	"github.com/parnurzeal/gorequest"
 	"strconv"
 	"strings"
 	"time"
@@ -108,7 +108,7 @@ func (hchttp *HcHttp) loadMeta(meta map[string]interface{}) error {
 		}
 	} else {
 		if hchttp.Proto == "https" {
-			hchttp.Port = 433
+			hchttp.Port = 443
 		}
 	}
 
@@ -188,13 +188,16 @@ func (hchttp *HcHttp) DoTest(result chan map[string]interface{}) error {
 	hchttp.Res["state"] = HEALTH_STATE_DOWN //it is not working unless noted otherwise
 
 	//set up
-	request := gorequest.New().Timeout(time.Duration(hchttp.Timeout)*time.Second).Set("User-Agent", USER_AGENT)
+	request := NewGorequest().Timeout(time.Duration(hchttp.Timeout)*time.Second).Set("User-Agent", USER_AGENT)
 
 	uri := fmt.Sprintf("%s://%s/%s", hchttp.Proto, hchttp.Host, strings.TrimLeft(hchttp.Url, "/"))
 
 	if (hchttp.Port != 80 && hchttp.Proto == "http") || (hchttp.Port != 443 && hchttp.Proto == "https") {
+
 		uri = fmt.Sprintf("%s://%s:%d/%s", hchttp.Proto, hchttp.Host, hchttp.Port, strings.TrimLeft(hchttp.Url, "/"))
 	}
+
+	request.Transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 
 	for _, v := range hchttp.Headers {
 
@@ -217,11 +220,13 @@ func (hchttp *HcHttp) DoTest(result chan map[string]interface{}) error {
 
 	response, body, errs := request.End()
 	if errs != nil {
-		msg := fmt.Sprintf("HTTP to %s result %+v", uri, errs)
+		msg := fmt.Sprintf("HTTP error %+v", errs)
 		res["msg"] = msg
 		result <- res
 		return nil
 	}
+
+	request.ClearSuperAgent()
 
 	testtime := makeTimestamp() - start
 
@@ -279,6 +284,7 @@ func (hchttp *HcHttp) DoTest(result chan map[string]interface{}) error {
 	}
 
 	res["state"] = state
+
 	result <- res
 
 	return nil
